@@ -19,9 +19,13 @@ def broadcast_pyobj(
     The `rank` here refer to the source rank on global process group (regardless
     of dist_group argument).
     """
-    device = torch.device(
-        "cuda" if torch.cuda.is_available() and not force_cpu_device else "cpu"
+    from sglang.multimodal_gen.runtime.utils.common import (
+        get_device_type,
+        is_gpu_alike,
     )
+
+    device_type = get_device_type() if is_gpu_alike() and not force_cpu_device else "cpu"
+    device = torch.device(device_type)
 
     if rank == src:
         if data is None or len(data) == 0:

@@ -574,8 +574,10 @@ class DenoisingStage(PipelineStage):
 
         logger.info("Starting Profiler...")
         # Build activities dynamically to avoid CUDA hangs when CUDA is unavailable
+        from sglang.multimodal_gen.runtime.utils.common import is_gpu_alike
+
         activities = [torch.profiler.ProfilerActivity.CPU]
-        if torch.cuda.is_available():
+        if is_gpu_alike():
             activities.append(torch.profiler.ProfilerActivity.CUDA)
 
         prof = torch.profiler.profile(
@@ -598,16 +600,26 @@ class DenoisingStage(PipelineStage):
 
     def step_profile(self):
         if self.profiler:
-            if torch.cuda.is_available():
-                torch.cuda.synchronize()
+            from sglang.multimodal_gen.runtime.utils.common import (
+                device_synchronize,
+                is_gpu_alike,
+            )
+
+            if is_gpu_alike():
+                device_synchronize()
             self.profiler.step()
 
     def stop_profile(self, batch: Req):
         try:
             if self.profiler:
                 logger.info("Stopping Profiler...")
-                if torch.cuda.is_available():
-                    torch.cuda.synchronize()
+                from sglang.multimodal_gen.runtime.utils.common import (
+                    device_synchronize,
+                    is_gpu_alike,
+                )
+
+                if is_gpu_alike():
+                    device_synchronize()
                 self.profiler.stop()
                 request_id = batch.request_id if batch.request_id else "profile_trace"
                 log_dir = f"./logs"
@@ -786,8 +798,16 @@ class DenoisingStage(PipelineStage):
         # to avoid device-sync caused by timestep comparison
         timesteps_cpu = timesteps.cpu()
         num_timesteps = timesteps_cpu.shape[0]
+        
+        from sglang.multimodal_gen.runtime.utils.common import (
+            get_device_type,
+            is_gpu_alike,
+        )
+
+        device_type_str = get_device_type() if is_gpu_alike() else "cpu"
+        
         with torch.autocast(
-            device_type=("cuda" if torch.cuda.is_available() else "cpu"),
+            device_type=device_type_str,
             dtype=target_dtype,
             enabled=autocast_enabled,
         ):

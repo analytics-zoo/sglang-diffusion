@@ -225,10 +225,15 @@ def init_distributed_environment(
     # Determine the appropriate backend based on the platform
     from sglang.multimodal_gen.runtime.platforms import current_platform
 
-    if backend == "nccl" and not current_platform.is_cuda_alike():
-        # Use gloo backend for non-CUDA platforms (MPS, CPU)
-        backend = "gloo"
-        logger.info("Using gloo backend for %s platform", current_platform.device_name)
+    if backend == "nccl":
+        if current_platform.is_xpu():
+            # Use XCCL backend for Intel XPU
+            backend = "xccl"
+            logger.info("Using XCCL backend for Intel XPU platform")
+        elif not current_platform.is_cuda_alike():
+            # Use gloo backend for non-CUDA platforms (MPS, CPU)
+            backend = "gloo"
+            logger.info("Using gloo backend for %s platform", current_platform.device_name)
 
     logger.debug(
         "world_size=%d rank=%d local_rank=%d " "distributed_init_method=%s backend=%s",
@@ -245,13 +250,18 @@ def init_distributed_environment(
         )
 
         # For MPS, don't pass device_id as it doesn't support device indices
-        extra_args = {} if current_platform.is_mps() else dict(device_id=device_id)
+        # For Gloo backend (CPU-only), don't pass device_id to avoid device association errors
+        extra_args = {}
+        if not current_platform.is_mps() and backend not in ["gloo"]:
+            # Only pass device_id for device-aware backends (nccl, xccl, etc.)
+            extra_args = dict(device_id=device_id)
+        
         torch.distributed.init_process_group(
             backend=backend,
-            init_method=distributed_init_method,
+            # init_method=distributed_init_method,
             world_size=world_size,
             rank=rank,
-            **extra_args,
+            # **extra_args,
         )
     # set the local rank
     # local_rank is not available in torch ProcessGroup,
@@ -598,8 +608,14 @@ def maybe_init_distributed_environment_and_model_parallel(
 
     # Only set CUDA device if we're on a CUDA platform
     if current_platform.is_cuda_alike():
-        device = torch.device(f"cuda:{local_rank}")
-        torch.cuda.set_device(device)
+        from sglang.multimodal_gen.runtime.utils.common import (
+            get_device_type,
+            set_device,
+        )
+
+        device_type_str = get_device_type()
+        device = torch.device(f"{device_type_str}:{local_rank}")
+        set_device(local_rank)
 
 
 def model_parallel_is_initialized() -> bool:

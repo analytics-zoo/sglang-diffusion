@@ -136,7 +136,7 @@ def fuse_scale_shift_kernel(
     block_l: int = 128,
     block_c: int = 128,
 ):
-    assert x.is_cuda and scale.is_cuda
+    assert (x.is_cuda or x.is_xpu) and (scale.is_cuda or scale.is_xpu)
     assert x.is_contiguous()
 
     B, L, C = x.shape
@@ -358,9 +358,9 @@ def triton_autotune_configs():
     # Maximum threads per block is architecture-dependent in theory, but in reality all are 1024
     max_threads_per_block = 1024
     # Default to warp size 32 if not defined by device
-    warp_size = getattr(
-        torch.cuda.get_device_properties(torch.cuda.current_device()), "warp_size", 32
-    )
+    device = torch.cuda.current_device() if torch.cuda.is_available() else torch.xpu.current_device()
+    device_props = torch.cuda.get_device_properties(device) if torch.cuda.is_available() else torch.xpu.get_device_properties(device)
+    warp_size = getattr(device_props, "warp_size", 32)
     # Autotune for warp counts which are powers of 2 and do not exceed thread per block limit
     return [
         triton.Config({}, num_warps=warp_count)
@@ -655,7 +655,8 @@ def _layer_norm_fwd_impl(
     BLOCK_N = min(MAX_FUSED_SIZE, triton.next_power_of_2(N))
     if N > BLOCK_N:
         raise RuntimeError("This layer norm doesn't support feature dim >= 64KB.")
-    with torch.cuda.device(x.device.index):
+    device_ctx = torch.cuda.device(x.device.index) if x.is_cuda else torch.xpu.device(x.device.index)
+    with device_ctx:
         torch.library.wrap_triton(_layer_norm_fwd_1pass_kernel)[(M,)](
             x,
             out,

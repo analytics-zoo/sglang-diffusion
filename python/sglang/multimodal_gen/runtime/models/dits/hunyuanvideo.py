@@ -37,6 +37,7 @@ from sglang.multimodal_gen.runtime.managers.forward_context import get_forward_c
 from sglang.multimodal_gen.runtime.models.dits.base import CachableDiT
 from sglang.multimodal_gen.runtime.models.utils import modulate
 from sglang.multimodal_gen.runtime.platforms import AttentionBackendEnum
+from sglang.multimodal_gen.runtime.utils.common import get_device_type
 
 
 class MMDoubleStreamBlock(nn.Module):
@@ -673,11 +674,13 @@ class HunyuanVideoTransformer3DModel(CachableDiT):
 
         inp = kwargs["img"].clone()
         vec_ = kwargs["vec"].clone()
+        # Get device type dynamically
+        device_type = get_device_type()
         # convert to DTensor
         vec_ = torch.distributed.tensor.DTensor.from_local(
             vec_,
             torch.distributed.DeviceMesh(
-                "cuda", list(range(get_sp_world_size())), mesh_dim_names=("dp",)
+                device_type, list(range(get_sp_world_size())), mesh_dim_names=("dp",)
             ),
             [torch.distributed.tensor.Replicate()],
         )
@@ -685,7 +688,7 @@ class HunyuanVideoTransformer3DModel(CachableDiT):
         inp = torch.distributed.tensor.DTensor.from_local(
             inp,
             torch.distributed.DeviceMesh(
-                "cuda", list(range(get_sp_world_size())), mesh_dim_names=("dp",)
+                device_type, list(range(get_sp_world_size())), mesh_dim_names=("dp",)
             ),
             [torch.distributed.tensor.Replicate()],
         )

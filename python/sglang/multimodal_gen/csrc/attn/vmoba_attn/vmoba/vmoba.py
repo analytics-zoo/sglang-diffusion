@@ -962,21 +962,31 @@ def process_moba_output(
 def generate_data(batch_size, seqlen, num_head, head_dim, dtype):
     random.seed(0)
     torch.manual_seed(0)
-    torch.cuda.manual_seed(0)
-    device = torch.cuda.current_device()
+    
+    # Platform-aware device setup
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(0)
+        device = torch.cuda.current_device()
+        device_str = "cuda"
+    elif torch.xpu.is_available():
+        device = torch.xpu.current_device()
+        device_str = "xpu"
+    else:
+        device = torch.device("cpu")
+        device_str = "cpu"
 
     q = torch.randn((batch_size, seqlen, num_head, head_dim), requires_grad=True).to(
-        dtype=dtype, device="cuda"
+        dtype=dtype, device=device_str
     )
     k = torch.randn((batch_size, seqlen, num_head, head_dim), requires_grad=True).to(
-        dtype=dtype, device="cuda"
+        dtype=dtype, device=device_str
     )
     v = torch.randn((batch_size, seqlen, num_head, head_dim), requires_grad=True).to(
-        dtype=dtype, device="cuda"
+        dtype=dtype, device=device_str
     )
     print(f"q.shape: {q.shape}, k.shape: {k.shape}, v.shape: {v.shape}")
     cu_seqlens = torch.arange(
-        0, q.shape[0] * q.shape[1] + 1, q.shape[1], dtype=torch.int32, device="cuda"
+        0, q.shape[0] * q.shape[1] + 1, q.shape[1], dtype=torch.int32, device=device_str
     )
     max_seqlen = q.shape[1]
     q = rearrange(q, "b s ... -> (b s) ...")
@@ -1010,6 +1020,13 @@ def test_attn_varlen_moba_speed(
     warmup_iters = 3
     perf_test_iters = 10
 
+    # Device-aware synchronize
+    def device_sync():
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        elif torch.xpu.is_available():
+            torch.xpu.synchronize()
+
     # Warmup
     for _ in range(warmup_iters):
         o = flash_attn_varlen_func(
@@ -1017,7 +1034,7 @@ def test_attn_varlen_moba_speed(
         )
         torch.autograd.backward(o, vo_grad)
 
-    torch.cuda.synchronize()
+    device_sync()
     start_flash = time.perf_counter()
     for _ in range(perf_test_iters):
         o = flash_attn_varlen_func(
@@ -1025,7 +1042,7 @@ def test_attn_varlen_moba_speed(
         )
         torch.autograd.backward(o, vo_grad)
 
-    torch.cuda.synchronize()
+    device_sync()
     time_flash = (time.perf_counter() - start_flash) / perf_test_iters * 1000
 
     # Warmup
@@ -1044,7 +1061,7 @@ def test_attn_varlen_moba_speed(
         )
         torch.autograd.backward(om, vo_grad)
 
-    torch.cuda.synchronize()
+    device_sync()
     start_moba = time.perf_counter()
     for _ in range(perf_test_iters):
         om = moba_attn_varlen(
@@ -1061,7 +1078,7 @@ def test_attn_varlen_moba_speed(
         )
         torch.autograd.backward(om, vo_grad)
 
-    torch.cuda.synchronize()
+    device_sync()
     time_moba = (time.perf_counter() - start_moba) / perf_test_iters * 1000
 
     print(f"Flash: {time_flash:.2f}ms, MoBA: {time_moba:.2f}ms")

@@ -144,7 +144,13 @@ class PipelineStage(ABC):
     @property
     def device(self) -> torch.device:
         """Get the device for this stage."""
-        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        from sglang.multimodal_gen.runtime.utils.common import (
+            get_device_type,
+            is_gpu_alike,
+        )
+
+        device_type = get_device_type() if is_gpu_alike() else "cpu"
+        return torch.device(device_type)
 
     def set_logging(self, enable: bool):
         """

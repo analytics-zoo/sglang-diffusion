@@ -55,6 +55,16 @@ def _is_musa():
         return False
 
 
+def _is_xpu():
+    """Check if Intel XPU (GPU) is available."""
+    try:
+        if hasattr(torch, "xpu") and torch.xpu.is_available():
+            return True
+    except Exception:
+        return False
+    return False
+
+
 def _is_mps():
     return torch.backends.mps.is_available()
 
@@ -303,7 +313,9 @@ def __dir__():
 
 
 def get_torch_distributed_backend() -> str:
-    if torch.cuda.is_available():
+    if _is_xpu():
+        return "xccl"
+    elif torch.cuda.is_available():
         return "nccl"
     elif _is_musa():
         return "mccl"

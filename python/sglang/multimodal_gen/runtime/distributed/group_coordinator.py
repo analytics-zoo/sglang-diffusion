@@ -43,11 +43,12 @@ def get_local_torch_device() -> torch.device:
     """Return the torch device for the current rank."""
     from sglang.multimodal_gen.runtime.platforms import current_platform
 
-    return (
-        torch.device(f"cuda:{envs.LOCAL_RANK}")
-        if current_platform.is_cuda_alike()
-        else torch.device("mps")
-    )
+    if current_platform.is_cuda() or current_platform.is_rocm():
+        return torch.device(f"cuda:{envs.LOCAL_RANK}")
+    elif current_platform.is_xpu():
+        return torch.device(f"xpu:{envs.LOCAL_RANK}")
+    else:
+        return torch.device("mps")
 
 
 def _get_unique_name(name: str) -> str:
@@ -119,7 +120,7 @@ def _update_nested_dict(nested_dict, flattened_key, value):
 
 @dataclass
 class GraphCaptureContext:
-    stream: torch.cuda.Stream | None
+    stream: torch.Stream | None  # Generic stream type for all devices
 
 
 class GroupCoordinator:
@@ -167,12 +168,44 @@ class GroupCoordinator:
         self.cpu_group = None
 
         for ranks in group_ranks:
+            print(ranks)
             device_group = torch.distributed.new_group(
                 ranks, backend=torch_distributed_backend
             )
-            # a group with `gloo` backend, to allow direct coordination between
-            # processes through the CPU.
-            cpu_group = torch.distributed.new_group(ranks, backend="gloo")
+            print(device_group)
+            
+            # Create a CPU group with `gloo` backend for coordination between processes
+            # For XPU devices, we need a workaround because PyTorch's new_group() may try
+            # to associate the Gloo backend with XPU device, which is not supported.
+            # The error "No backend type associated with device type xpu" occurs because
+            # Gloo backend doesn't have XPU support.
+            from sglang.multimodal_gen.runtime.platforms import current_platform
+            
+            if current_platform.is_xpu():
+                # Workaround: For XPU devices, PyTorch's new_group() may try to associate
+                # the Gloo backend with XPU device, which is not supported.
+                # The error "No backend type associated with device type xpu" occurs because
+                # Gloo backend doesn't have XPU support.
+                # We save the current device for potential future use
+                current_dev = torch.xpu.current_device()
+                
+                # PyTorch distributed may check device from global state
+                # We create the Gloo group while ensuring no XPU device context
+                try:
+                    # Create gloo group - it should only use CPU 
+                    cpu_group = torch.distributed.new_group(ranks, backend="gloo")
+                except RuntimeError as e:
+                    if "No backend type associated with device type xpu" in str(e):
+                        logger.error(
+                            "Failed to create Gloo CPU group due to XPU device association. "
+                            "This is a known PyTorch limitation. "
+                            "Workaround: Ensure torch.distributed.init_process_group was called "
+                            "without device_id parameter for XPU platforms."
+                        )
+                    raise
+            else:
+                cpu_group = torch.distributed.new_group(ranks, backend="gloo")
+            
             if self.rank in ranks:
                 self.ranks = ranks
                 self.world_size = len(ranks)
@@ -193,12 +226,23 @@ class GroupCoordinator:
         self.device_communicator: DeviceCommunicatorBase = None  # type: ignore
         if use_device_communicator and self.world_size > 1:
             # Platform-aware device communicator selection
-            if current_platform.is_cuda_alike():
+            if current_platform.is_cuda() or current_platform.is_rocm():
                 from sglang.multimodal_gen.runtime.distributed.device_communicators.cuda_communicator import (
                     CudaCommunicator,
                 )
 
                 self.device_communicator = CudaCommunicator(
+                    cpu_group=self.cpu_group,
+                    device=self.device,
+                    device_group=self.device_group,
+                    unique_name=self.unique_name,
+                )
+            elif current_platform.is_xpu():
+                from sglang.multimodal_gen.runtime.distributed.device_communicators.xpu_communicator import (
+                    XpuCommunicator,
+                )
+
+                self.device_communicator = XpuCommunicator(
                     cpu_group=self.cpu_group,
                     device=self.device,
                     device_group=self.device_group,
@@ -285,21 +329,36 @@ class GroupCoordinator:
     def graph_capture(self, graph_capture_context: GraphCaptureContext | None = None):
         # Platform-aware graph capture
         from sglang.multimodal_gen.runtime.platforms import current_platform
+        from sglang.multimodal_gen.runtime.utils.common import get_device_module
 
         if current_platform.is_cuda_alike():
+            device_module = get_device_module()
             if graph_capture_context is None:
-                stream = torch.cuda.Stream()
+                if current_platform.is_cuda() or current_platform.is_rocm():
+                    stream = torch.cuda.Stream()
+                elif current_platform.is_xpu():
+                    stream = torch.xpu.Stream()
+                else:
+                    stream = None
                 graph_capture_context = GraphCaptureContext(stream)
             else:
                 stream = graph_capture_context.stream
 
             # ensure all initialization operations complete before attempting to
             # capture the graph on another stream
-            curr_stream = torch.cuda.current_stream()
-            if curr_stream != stream:
-                stream.wait_stream(curr_stream)
-
-            with torch.cuda.stream(stream):
+            if current_platform.is_cuda() or current_platform.is_rocm():
+                curr_stream = torch.cuda.current_stream()
+                if curr_stream != stream:
+                    stream.wait_stream(curr_stream)
+                with torch.cuda.stream(stream):
+                    yield graph_capture_context
+            elif current_platform.is_xpu():
+                curr_stream = torch.xpu.current_stream()
+                if curr_stream != stream:
+                    stream.wait_stream(curr_stream)
+                with torch.xpu.stream(stream):
+                    yield graph_capture_context
+            else:
                 yield graph_capture_context
         else:
             # For non-CUDA platforms (MPS, CPU), just yield the context without stream management
@@ -1010,7 +1069,8 @@ class PipelineGroupCoordinator(GroupCoordinator):
 
         # To protect against race condition when using batch_isend_irecv().
         # should take this out once the bug with batch_isend_irecv is resolved.
-        synchronize()
+        # synchronize()
+        torch.xpu.synchronize()
 
         ops = []
         recv_prev_shape_tensor = None

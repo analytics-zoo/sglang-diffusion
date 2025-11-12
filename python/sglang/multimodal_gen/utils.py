@@ -78,51 +78,78 @@ def find_nccl_library() -> str:
     return str(so_file)
 
 
-prev_set_stream = torch.cuda.set_stream
+from sglang.multimodal_gen.runtime.utils.common import is_cuda, is_xpu
 
-_current_stream = None
+# Store original stream functions for different backends
+_prev_set_stream = {}
+_current_stream = {}
+
+if is_cuda():
+    _prev_set_stream['cuda'] = torch.cuda.set_stream
+elif is_xpu():
+    _prev_set_stream['xpu'] = torch.xpu.set_stream
 
 
-def _patched_set_stream(stream: torch.cuda.Stream | None) -> None:
+def _patched_cuda_set_stream(stream: torch.cuda.Stream | None) -> None:
     global _current_stream
-    _current_stream = stream
+    _current_stream['cuda'] = stream
     if stream is not None:
-        prev_set_stream(stream)
+        _prev_set_stream['cuda'](stream)
 
 
-torch.cuda.set_stream = _patched_set_stream
+def _patched_xpu_set_stream(stream: torch.Stream | None) -> None:
+    global _current_stream
+    _current_stream['xpu'] = stream
+    if stream is not None:
+        _prev_set_stream['xpu'](stream)
 
 
-def current_stream() -> torch.cuda.Stream | None:
+# Patch the appropriate backend
+if is_cuda():
+    torch.cuda.set_stream = _patched_cuda_set_stream
+elif is_xpu():
+    torch.xpu.set_stream = _patched_xpu_set_stream
+
+
+def current_stream() -> torch.cuda.Stream | torch.Stream | None:
     """
-    replace `torch.cuda.current_stream()` with `sglang.multimodal_gen.utils.current_stream()`.
-    it turns out that `torch.cuda.current_stream()` is quite expensive,
+    Replace `torch.cuda.current_stream()` with `sglang.multimodal_gen.utils.current_stream()`.
+    It turns out that `torch.cuda.current_stream()` is quite expensive,
     as it will construct a new stream object at each call.
-    here we patch `torch.cuda.set_stream` to keep track of the current stream
-    directly, so that we can avoid calling `torch.cuda.current_stream()`.
+    Here we patch the set_stream functions to keep track of the current stream
+    directly, so that we can avoid calling current_stream() on each call.
 
-    the underlying hypothesis is that we do not call `torch._C._cuda_setStream`
+    The underlying hypothesis is that we do not call the stream setting functions
     from C/C++ code.
     """
     from sglang.multimodal_gen.runtime.platforms import current_platform
 
-    # For non-CUDA platforms, return None
+    # For non-GPU platforms, return None
     if not current_platform.is_cuda_alike():
         return None
 
     global _current_stream
-    if _current_stream is None:
-        # when this function is called before any stream is set,
-        # we return the default stream.
-        # On ROCm using the default 0 stream in combination with RCCL
-        # is hurting performance. Therefore creating a dedicated stream
-        # per process
-        _current_stream = (
-            torch.cuda.Stream()
-            if current_platform.is_rocm()
-            else torch.cuda.current_stream()
-        )
-    return _current_stream
+    
+    if current_platform.is_cuda() or current_platform.is_rocm():
+        if 'cuda' not in _current_stream or _current_stream['cuda'] is None:
+            # When this function is called before any stream is set,
+            # we return the default stream.
+            # On ROCm using the default 0 stream in combination with RCCL
+            # is hurting performance. Therefore creating a dedicated stream
+            # per process
+            _current_stream['cuda'] = (
+                torch.cuda.Stream()
+                if current_platform.is_rocm()
+                else torch.cuda.current_stream()
+            )
+        return _current_stream['cuda']
+    elif current_platform.is_xpu():
+        if 'xpu' not in _current_stream or _current_stream['xpu'] is None:
+            # For XPU, create a dedicated stream
+            _current_stream['xpu'] = torch.xpu.Stream()
+        return _current_stream['xpu']
+    
+    return None
 
 
 class StoreBoolean(argparse.Action):
