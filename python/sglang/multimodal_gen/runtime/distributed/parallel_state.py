@@ -235,7 +235,7 @@ def init_distributed_environment(
             backend = "gloo"
             logger.info("Using gloo backend for %s platform", current_platform.device_name)
 
-    logger.debug(
+    logger.info(
         "world_size=%d rank=%d local_rank=%d " "distributed_init_method=%s backend=%s",
         world_size,
         rank,
@@ -251,17 +251,35 @@ def init_distributed_environment(
 
         # For MPS, don't pass device_id as it doesn't support device indices
         # For Gloo backend (CPU-only), don't pass device_id to avoid device association errors
+        # For XPU with XCCL backend, don't pass device_id to avoid issues when creating
+        # subsequent Gloo CPU groups (PyTorch will check the global process group's device)
         extra_args = {}
-        if not current_platform.is_mps() and backend not in ["gloo"]:
-            # Only pass device_id for device-aware backends (nccl, xccl, etc.)
+        if (not current_platform.is_mps() 
+            and backend not in ["gloo", "xccl"]
+            and not current_platform.is_xpu()):
+            # Only pass device_id for CUDA/ROCm with NCCL backend
             extra_args = dict(device_id=device_id)
-        
+
+        # test for xpu
+        distributed_init_method = "tcp://localhost:29500"
+        logger.info(
+            f"[Rank {rank}] Calling init_process_group with backend={backend}, "
+            f"init_method={distributed_init_method}, world_size={world_size}, rank={rank}, "
+            f"extra_args={extra_args}",
+            main_process_only=False,
+        )
+
         torch.distributed.init_process_group(
             backend=backend,
-            # init_method=distributed_init_method,
+            init_method=distributed_init_method,
             world_size=world_size,
             rank=rank,
-            # **extra_args,
+            # **extra_args,  # don't set device id on XPU
+        )
+
+        logger.info(
+            f"[Rank {rank}] init_process_group completed successfully",
+            main_process_only=False,
         )
     # set the local rank
     # local_rank is not available in torch ProcessGroup,
@@ -385,30 +403,60 @@ def initialize_model_parallel(
         data_parallel_size,
         "tp-sp-pp-cfg-dp",
     )
+    logger.info(
+        f"[Rank {get_world_group().rank}] Starting model parallel initialization",
+        main_process_only=False,
+    )
+    
     global _DP
     assert _DP is None, "data parallel group is already initialized"
+    logger.info(
+        f"[Rank {get_world_group().rank}] Creating DP group",
+        main_process_only=False,
+    )
     _DP = init_parallel_group_coordinator(
         group_ranks=rank_generator.get_ranks("dp"),
         local_rank=get_world_group().local_rank,
         backend=backend,
         parallel_mode="data",
     )
+    logger.info(
+        f"[Rank {get_world_group().rank}] DP group created",
+        main_process_only=False,
+    )
 
     global _CFG
     assert _CFG is None, "classifier_free_guidance group is already initialized"
+    logger.info(
+        f"[Rank {get_world_group().rank}] Creating CFG group",
+        main_process_only=False,
+    )
     _CFG = init_parallel_group_coordinator(
         group_ranks=rank_generator.get_ranks("cfg"),
         local_rank=get_world_group().local_rank,
         backend=backend,
         parallel_mode="classifier_free_guidance",
     )
+    logger.info(
+        f"[Rank {get_world_group().rank}] CFG group created",
+        main_process_only=False,
+    )
+    
     global _PP
     assert _PP is None, "pipeline model parallel group is already initialized"
+    logger.info(
+        f"[Rank {get_world_group().rank}] Creating PP group",
+        main_process_only=False,
+    )
     _PP = init_parallel_group_coordinator(
         group_ranks=rank_generator.get_ranks("pp"),
         local_rank=get_world_group().local_rank,
         backend=backend,
         parallel_mode="pipeline",
+    )
+    logger.info(
+        f"[Rank {get_world_group().rank}] PP group created",
+        main_process_only=False,
     )
 
     global _SP
@@ -417,11 +465,24 @@ def initialize_model_parallel(
     from yunchang import set_seq_parallel_pg
     from yunchang.globals import PROCESS_GROUP
 
+    logger.info(
+        f"[Rank {get_world_group().rank}] Before set_seq_parallel_pg: "
+        f"ulysses_degree={ulysses_degree}, ring_degree={ring_degree}, "
+        f"rank_in_group={get_world_group().rank_in_group}, "
+        f"dit_parallel_size={dit_parallel_size}",
+        main_process_only=False,
+    )
+    
     set_seq_parallel_pg(
         sp_ulysses_degree=ulysses_degree,
         sp_ring_degree=ring_degree,
         rank=get_world_group().rank_in_group,
         world_size=dit_parallel_size,
+    )
+    
+    logger.info(
+        f"[Rank {get_world_group().rank}] After set_seq_parallel_pg",
+        main_process_only=False,
     )
 
     _SP = init_parallel_group_coordinator(
@@ -431,6 +492,11 @@ def initialize_model_parallel(
         parallel_mode="sequence",
         ulysses_group=PROCESS_GROUP.ULYSSES_PG,
         ring_group=PROCESS_GROUP.RING_PG,
+    )
+    
+    logger.info(
+        f"[Rank {get_world_group().rank}] After creating SP group coordinator",
+        main_process_only=False,
     )
 
     global _TP
@@ -584,18 +650,29 @@ def maybe_init_distributed_environment_and_model_parallel(
     rank = int(os.environ.get("RANK", 0))
     device = get_local_torch_device()
     logger.info(
-        "Initializing distributed environment with world_size=%d, device=%s",
-        world_size,
-        device,
+        f"[Rank {rank}] Initializing distributed environment with world_size={world_size}, device={device}",
         main_process_only=False,
     )
 
+    logger.info(
+        f"[Rank {rank}] Before init_distributed_environment",
+        main_process_only=False,
+    )
     init_distributed_environment(
         world_size=world_size,
         rank=rank,
         local_rank=local_rank,
         distributed_init_method=distributed_init_method,
         device_id=device,
+    )
+    logger.info(
+        f"[Rank {rank}] After init_distributed_environment",
+        main_process_only=False,
+    )
+    
+    logger.info(
+        f"[Rank {rank}] Before initialize_model_parallel",
+        main_process_only=False,
     )
     initialize_model_parallel(
         data_parallel_size=dp_size,
@@ -604,6 +681,10 @@ def maybe_init_distributed_environment_and_model_parallel(
         ulysses_degree=ulysses_degree,
         ring_degree=ring_degree,
         sequence_parallel_degree=sp_size,
+    )
+    logger.info(
+        f"[Rank {rank}] After initialize_model_parallel",
+        main_process_only=False,
     )
 
     # Only set CUDA device if we're on a CUDA platform
@@ -616,11 +697,6 @@ def maybe_init_distributed_environment_and_model_parallel(
         device_type_str = get_device_type()
         device = torch.device(f"{device_type_str}:{local_rank}")
         set_device(local_rank)
-
-
-def model_parallel_is_initialized() -> bool:
-    """Check if tensor, sequence parallel groups are initialized."""
-    return _TP is not None and _SP is not None and _DP is not None and _CFG is not None
 
 
 _TP_STATE_PATCHED = False

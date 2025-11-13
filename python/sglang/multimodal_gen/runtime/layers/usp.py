@@ -38,10 +38,30 @@ def _usp_all_to_all_single(x: torch.Tensor) -> torch.Tensor:
     assert ulysses_pg is not None, "Ulysses process group is not initialized."
     x_shape = x.shape
     x = x.flatten()
+    
+    # Get rank for debugging
+    import torch.distributed as dist
+    rank = dist.get_rank() if dist.is_initialized() else 0
+    world_size = dist.get_world_size() if dist.is_initialized() else 1
+    
+    print(f"[DEBUG] Rank {rank}: Performing USP all-to-all-single operation", flush=True)
+    print(f"[DEBUG] Rank {rank}: Input tensor shape: {x.shape}, first element: {x[0].item()}", flush=True)
+    print(f"[DEBUG] Rank {rank}: Ulysses group: {ulysses_pg}, world_size: {world_size}", flush=True)
+    
+    logger.info("Performing USP all-to-all-single operation")
+    logger.info(f"Input tensor shape: {x.shape}, first element: {x[0].item()}")
+    
     x = ft_c.all_to_all_single(
         x, output_split_sizes=None, input_split_sizes=None, group=ulysses_pg
     )
+    
+    print(f"[DEBUG] Rank {rank}: After all_to_all_single call, waiting for tensor...", flush=True)
+    
     x = _maybe_wait(x)
+    
+    print(f"[DEBUG] Rank {rank}: Completed USP all-to-all-single operation, output first element: {x[0].item()}", flush=True)
+    
+    logger.info(f"Completed USP all-to-all-single operation, output first element: {x[0].item()}")
     x = x.reshape(x_shape)
     return x
 

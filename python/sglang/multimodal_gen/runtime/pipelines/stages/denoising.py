@@ -776,6 +776,11 @@ class DenoisingStage(PipelineStage):
         Returns:
             The batch with denoised latents.
         """
+        # DEBUG: Check which rank is calling this
+        import torch.distributed as dist
+        rank = dist.get_rank() if dist.is_initialized() else 0
+        print(f"[DEBUG] Rank {rank}: DenoisingStage.forward() called", flush=True)
+        
         # Prepare variables for the denoising loop
 
         prepared_vars = self._prepare_denoising_loop(batch, server_args)

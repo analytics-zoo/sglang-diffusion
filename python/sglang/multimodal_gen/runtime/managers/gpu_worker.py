@@ -63,18 +63,35 @@ class GPUWorker:
 
     def init_device_and_model(self) -> None:
         """Initialize the device and load the model."""
+        print(f"[DEBUG] Worker {self.rank}: init_device_and_model called", flush=True)
+        logger.info(f"Worker {self.rank}: init_device_and_model called", main_process_only=False)
+        
         setproctitle(f"sgl_diffusion::scheduler:{self.local_rank}")
+        print(f"[DEBUG] Worker {self.rank}: Process title set", flush=True)
+        logger.info(f"Worker {self.rank}: Process title set", main_process_only=False)
         
         from sglang.multimodal_gen.runtime.utils.common import set_device
         
+        print(f"[DEBUG] Worker {self.rank}: Before set_device({self.local_rank})", flush=True)
+        logger.info(f"Worker {self.rank}: Before set_device({self.local_rank})", main_process_only=False)
         set_device(self.local_rank)
+        print(f"[DEBUG] Worker {self.rank}: After set_device", flush=True)
+        logger.info(
+            f"{CYAN}Worker {self.rank}: Initializing device {self.local_rank}{RESET}",
+            main_process_only=False
+        )
         # Set environment variables for distributed initialization
         os.environ["MASTER_ADDR"] = "localhost"
         os.environ["MASTER_PORT"] = str(self.master_port)
         os.environ["LOCAL_RANK"] = str(self.local_rank)
         os.environ["RANK"] = str(self.rank)
         os.environ["WORLD_SIZE"] = str(self.server_args.num_gpus)
+        print(
+            f"[DEBUG] Worker {self.rank}: Environment variables set",
+            flush=True
+        )
         # Initialize the distributed environment
+        print(f"[DEBUG] Worker {self.rank}: Calling maybe_init...", flush=True)
         maybe_init_distributed_environment_and_model_parallel(
             tp_size=self.server_args.tp_size,
             enable_cfg_parallel=self.server_args.enable_cfg_parallel,
@@ -83,8 +100,14 @@ class GPUWorker:
             sp_size=self.server_args.sp_degree,
             dp_size=self.server_args.dp_size,
         )
+        print(f"[DEBUG] Worker {self.rank}: Returned from maybe_init", flush=True)
+        torch.xpu.synchronize()
+        print(f"[DEBUG] Worker {self.rank}: Distributed environment initialized.", flush=True)
+        logger.info(f"Worker {self.rank}: Distributed environment initialized.", main_process_only=False)
 
+        print(f"[DEBUG] Worker {self.rank}: Building pipeline...", flush=True)
         self.pipeline = build_pipeline(self.server_args)
+        print(f"[DEBUG] Worker {self.rank}: Pipeline built", flush=True)
 
         logger.info(
             f"Worker {self.rank}: Initialized device, model, and distributed environment."
@@ -94,10 +117,18 @@ class GPUWorker:
         """
         Execute a forward pass.
         """
+        import torch.distributed as dist
+        rank = dist.get_rank() if dist.is_initialized() else 0
+        print(f"[DEBUG] Worker {rank}: execute_forward called with {len(batch) if batch else 0} requests", flush=True)
+        
         assert self.pipeline is not None
         # TODO: dealing with first req for now
         req = batch[0]
+        
+        print(f"[DEBUG] Worker {rank}: Calling pipeline.forward()", flush=True)
         output_batch = self.pipeline.forward(req, server_args)
+        print(f"[DEBUG] Worker {rank}: pipeline.forward() completed", flush=True)
+        
         if req.perf_logger:
             req.perf_logger.log_total_duration("total_inference_time")
         return output_batch

@@ -168,11 +168,11 @@ class GroupCoordinator:
         self.cpu_group = None
 
         for ranks in group_ranks:
-            print(ranks)
+            # print(rankss)
             device_group = torch.distributed.new_group(
                 ranks, backend=torch_distributed_backend
             )
-            print(device_group)
+            # print(device_group)
             
             # Create a CPU group with `gloo` backend for coordination between processes
             # For XPU devices, we need a workaround because PyTorch's new_group() may try
