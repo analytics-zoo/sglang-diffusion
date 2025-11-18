@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     SGL_DIFFUSION_LOGGING_PREFIX: str = ""
     SGL_DIFFUSION_LOGGING_CONFIG_PATH: str | None = None
     SGL_DIFFUSION_TRACE_FUNCTION: int = 0
-    SGL_DIFFUSION_WORKER_MULTIPROC_METHOD: str = "fork"
+    SGL_DIFFUSION_WORKER_MULTIPROC_METHOD: str = "spawn"
     SGL_DIFFUSION_TARGET_DEVICE: str = "cuda"
     MAX_JOBS: str | None = None
     NVCC_THREADS: str | None = None
@@ -275,7 +275,7 @@ environment_variables: dict[str, Callable[[], Any]] = {
     # Use dedicated multiprocess context for workers.
     # Both spawn and fork work
     "SGL_DIFFUSION_WORKER_MULTIPROC_METHOD": lambda: os.getenv(
-        "SGL_DIFFUSION_WORKER_MULTIPROC_METHOD", "fork"
+        "SGL_DIFFUSION_WORKER_MULTIPROC_METHOD", "spawn"
     ),
     # Enables torch profiler if set. Path to the directory where torch profiler
     # traces are saved. Note that it must be an absolute path.

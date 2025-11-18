@@ -99,6 +99,7 @@ class GPUWorker:
             ring_degree=self.server_args.ring_degree,
             sp_size=self.server_args.sp_degree,
             dp_size=self.server_args.dp_size,
+            # distributed_init_method=f"tcp://localhost:{self.master_port}",
         )
         print(f"[DEBUG] Worker {self.rank}: Returned from maybe_init", flush=True)
         torch.xpu.synchronize()

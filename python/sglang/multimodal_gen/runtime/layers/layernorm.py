@@ -59,6 +59,22 @@ class RMSNorm(CustomOp):
         if get_bool_env_var("SGLANG_ENABLE_DETERMINISTIC_INFERENCE"):
             self._forward_method = self.forward_native
 
+    def forward_xpu(
+        self,
+        x: torch.Tensor,
+        residual: Optional[torch.Tensor] = None,
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        shape = x.shape
+        x = x.view(-1, shape[-1])
+        if self.variance_size_override is not None:
+            return self.forward_native(x, residual)
+        if residual is not None:
+            fused_add_rmsnorm(x, residual, self.weight.data, self.variance_epsilon)
+            return x, residual
+        out = rmsnorm(x, self.weight.data, self.variance_epsilon)
+        out = out.view(shape)
+        return out
+
     def forward_triton(self, x: torch.Tensor, residual: Optional[torch.Tensor] = None):
         return rms_norm_fn(
             x, self.weight, bias=None, residual=residual, eps=self.variance_epsilon

@@ -4,6 +4,7 @@ import logging
 from typing import TYPE_CHECKING
 
 import torch
+import torch.distributed as dist
 import torch.distributed._functional_collectives as ft_c
 from packaging.version import parse
 from torch.distributed.tensor.experimental._attention import _cp_options
@@ -11,6 +12,9 @@ from torch.distributed.tensor.experimental._attention import _cp_options
 from sglang.multimodal_gen.runtime.distributed.parallel_state import (
     get_sp_group,
     get_ulysses_parallel_world_size,
+)
+from sglang.multimodal_gen.runtime.layers.usp_fallback import (
+    ft_c_all_to_all_single_with_fallback,
 )
 
 _cp_options.enable_load_balance = False
@@ -34,33 +38,81 @@ def _maybe_wait(tensor: torch.Tensor) -> torch.Tensor:
 
 
 def _usp_all_to_all_single(x: torch.Tensor) -> torch.Tensor:
+    """
+    Perform all-to-all operation on tensor.
+    
+    For dist.all_to_all_single to work correctly, the input tensor must be organized
+    such that it can be evenly split along dimension 0 into world_size chunks.
+    
+    Input: Tensor of shape [h, b, s, d] where h must be divisible by world_size
+    Output: Tensor of same shape after all-to-all exchange
+    
+    The function will:
+    1. Reshape to [world_size, h // world_size, b, s, d]
+    2. Perform all-to-all
+    3. Reshape back to [h, b, s, d] (with different content distribution)
+    """
     ulysses_pg = get_sp_group().ulysses_group
     assert ulysses_pg is not None, "Ulysses process group is not initialized."
     x_shape = x.shape
     x = x.flatten()
-    
+
     # Get rank for debugging
     import torch.distributed as dist
     rank = dist.get_rank() if dist.is_initialized() else 0
     world_size = dist.get_world_size() if dist.is_initialized() else 1
-    
+    group_world_size = dist.get_world_size(ulysses_pg) if dist.is_initialized() else 1
+    group_rank = dist.get_rank(ulysses_pg) if dist.is_initialized() else 0
+
     print(f"[DEBUG] Rank {rank}: Performing USP all-to-all-single operation", flush=True)
-    print(f"[DEBUG] Rank {rank}: Input tensor shape: {x.shape}, first element: {x[0].item()}", flush=True)
-    print(f"[DEBUG] Rank {rank}: Ulysses group: {ulysses_pg}, world_size: {world_size}", flush=True)
-    
-    logger.info("Performing USP all-to-all-single operation")
-    logger.info(f"Input tensor shape: {x.shape}, first element: {x[0].item()}")
-    
-    x = ft_c.all_to_all_single(
-        x, output_split_sizes=None, input_split_sizes=None, group=ulysses_pg
-    )
-    
+    print(f"[DEBUG] Rank {rank}: Input tensor shape: {x.shape}, dtype: {x.dtype}, device: {x.device}", flush=True)
+    print(f"[DEBUG] Rank {rank}: Global world_size: {world_size}, Group world_size: {group_world_size}, Group rank: {group_rank}", flush=True)
+    print(f"[DEBUG] Rank {rank}: Ulysses group object: {ulysses_pg}, backend: {dist.get_backend(ulysses_pg)}", flush=True)
+
+    # NOTE: DO NOT add barrier here!
+    # In REPLICATED paradigm, ranks may execute at different rates.
+    # The all_to_all_single itself is a synchronization point.
+
+    # XCCL backend doesn't support all_to_all_single, use fallback directly
+    backend = dist.get_backend(ulysses_pg)
+    if backend == 'xccl':
+        print(f"[DEBUG] Rank {rank}: XCCL backend detected, using fallback implementation", flush=True)
+        # x = ft_c_all_to_all_single_with_fallback(
+        #     x, output_split_sizes=None, input_split_sizes=None, group=ulysses_pg
+        # )
+
+        x = x.reshape((world_size, -1))
+        # x = x.repeat_interleave(world_size)
+        # x = torch.rand((world_size), dtype=x.dtype, device=x.device)
+        output = torch.empty_like(x)
+        dist.all_to_all_single(output, x, group=None)
+        x = output.reshape(x_shape)
+
+        # x = ft_c.all_to_all_single(
+        #     x, output_split_sizes=None, input_split_sizes=None, group=ulysses_pg
+        # )
+        print(f"[DEBUG] Rank {rank}: Fallback all_to_all_single succeeded", flush=True)
+    else:
+        print(f"[DEBUG] Rank {rank}: Using ft_c.all_to_all_single with backend={backend}", flush=True)
+        # Use fallback implementation that handles unsupported backends
+        try:
+            x = ft_c.all_to_all_single(
+                x, output_split_sizes=None, input_split_sizes=None, group=ulysses_pg
+            )
+            print(f"[DEBUG] Rank {rank}: ft_c.all_to_all_single succeeded", flush=True)
+        except (NotImplementedError, RuntimeError) as e:
+            print(f"[DEBUG] Rank {rank}: ft_c.all_to_all_single not supported ({type(e).__name__}), using fallback", flush=True)
+            x = ft_c_all_to_all_single_with_fallback(
+                x, output_split_sizes=None, input_split_sizes=None, group=ulysses_pg
+            )
+
     print(f"[DEBUG] Rank {rank}: After all_to_all_single call, waiting for tensor...", flush=True)
-    
+
     x = _maybe_wait(x)
-    
-    print(f"[DEBUG] Rank {rank}: Completed USP all-to-all-single operation, output first element: {x[0].item()}", flush=True)
-    
+
+    print(f"[DEBUG] Rank {rank}: Tensor wait completed", flush=True)
+    print(f"[DEBUG] Rank {rank}: Completed USP all-to-all-single operation, output shape: {x.shape}, output first element: {x[0].item()}", flush=True)
+
     logger.info(f"Completed USP all-to-all-single operation, output first element: {x[0].item()}")
     x = x.reshape(x_shape)
     return x

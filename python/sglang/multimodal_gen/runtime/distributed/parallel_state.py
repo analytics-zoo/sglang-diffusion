@@ -217,7 +217,7 @@ def set_custom_all_reduce(enable: bool):
 def init_distributed_environment(
     world_size: int = 1,
     rank: int = 0,
-    distributed_init_method: str = "env://",
+    distributed_init_method: str = "tcp://",
     local_rank: int = 0,
     backend: str = "nccl",
     device_id: torch.device | None = None,
@@ -260,26 +260,17 @@ def init_distributed_environment(
             # Only pass device_id for CUDA/ROCm with NCCL backend
             extra_args = dict(device_id=device_id)
 
-        # test for xpu
-        distributed_init_method = "tcp://localhost:29500"
-        logger.info(
-            f"[Rank {rank}] Calling init_process_group with backend={backend}, "
-            f"init_method={distributed_init_method}, world_size={world_size}, rank={rank}, "
-            f"extra_args={extra_args}",
-            main_process_only=False,
-        )
+        # torch.xpu.set_device(local_rank)
 
+        rank = int(os.environ.get("RANK", -1))
+        world_size = int(os.environ.get("WORLD_SIZE", -1))
         torch.distributed.init_process_group(
             backend=backend,
-            init_method=distributed_init_method,
+            init_method=f"tcp://localhost:29500",
             world_size=world_size,
             rank=rank,
-            # **extra_args,  # don't set device id on XPU
-        )
-
-        logger.info(
-            f"[Rank {rank}] init_process_group completed successfully",
-            main_process_only=False,
+            # local_rank=local_rank,
+            **extra_args,
         )
     # set the local rank
     # local_rank is not available in torch ProcessGroup,

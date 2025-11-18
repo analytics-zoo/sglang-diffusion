@@ -244,9 +244,9 @@ def fuse_scale_shift_kernel(
 @triton.autotune(
     configs=[
         triton.Config({"BLOCK_HS_HALF": 32}, num_warps=2),
-        triton.Config({"BLOCK_HS_HALF": 64}, num_warps=4),
-        triton.Config({"BLOCK_HS_HALF": 128}, num_warps=4),
-        triton.Config({"BLOCK_HS_HALF": 256}, num_warps=8),
+        # triton.Config({"BLOCK_HS_HALF": 64}, num_warps=4),
+        # triton.Config({"BLOCK_HS_HALF": 128}, num_warps=4),
+        # triton.Config({"BLOCK_HS_HALF": 256}, num_warps=8),
     ],
     key=["head_size", "interleaved"],
 )

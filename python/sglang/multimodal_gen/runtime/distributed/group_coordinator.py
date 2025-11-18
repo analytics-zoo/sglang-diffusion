@@ -168,7 +168,7 @@ class GroupCoordinator:
         self.cpu_group = None
 
         for ranks in group_ranks:
-            # print(rankss)
+            # print(ranks)
             device_group = torch.distributed.new_group(
                 ranks, backend=torch_distributed_backend
             )
@@ -331,7 +331,7 @@ class GroupCoordinator:
         from sglang.multimodal_gen.runtime.platforms import current_platform
         from sglang.multimodal_gen.runtime.utils.common import get_device_module
 
-        if current_platform.is_cuda_alike():
+        if False and current_platform.is_cuda_alike():
             device_module = get_device_module()
             if graph_capture_context is None:
                 if current_platform.is_cuda() or current_platform.is_rocm():
