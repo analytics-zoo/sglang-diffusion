@@ -28,7 +28,6 @@ from sglang.multimodal_gen.runtime.utils.logging_utils import (
 
 logger = init_logger(__name__)
 
-# ANSI color codes
 CYAN = "\033[1;36m"
 RESET = "\033[0;0m"
 
@@ -131,6 +130,16 @@ class GPUWorker:
         print(f"[DEBUG] Worker {rank}: pipeline.forward() completed", flush=True)
         
         if req.perf_logger:
+            logging_info = getattr(output_batch, "logging_info", None) or getattr(
+                req, "logging_info", None
+            )
+            if logging_info:
+                try:
+                    req.perf_logger.log_stage_metrics(logging_info)
+                except Exception:
+                    logger.exception(
+                        "Failed to log stage metrics for request %s", req.request_id
+                    )
             req.perf_logger.log_total_duration("total_inference_time")
         return output_batch
 
