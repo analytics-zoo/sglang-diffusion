@@ -125,11 +125,12 @@ def current_stream() -> torch.cuda.Stream | torch.Stream | None:
     from sglang.multimodal_gen.runtime.platforms import current_platform
 
     # For non-GPU platforms, return None
+    # return None # For test on XPU
     if not current_platform.is_cuda_alike():
         return None
 
     global _current_stream
-    
+
     if current_platform.is_cuda() or current_platform.is_rocm():
         if 'cuda' not in _current_stream or _current_stream['cuda'] is None:
             # When this function is called before any stream is set,
@@ -148,7 +149,7 @@ def current_stream() -> torch.cuda.Stream | torch.Stream | None:
             # For XPU, create a dedicated stream
             _current_stream['xpu'] = torch.xpu.Stream()
         return _current_stream['xpu']
-    
+
     return None
 
 

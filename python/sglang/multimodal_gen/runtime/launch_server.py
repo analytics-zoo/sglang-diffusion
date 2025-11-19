@@ -2,6 +2,8 @@
 
 import multiprocessing as mp
 
+import signal, os
+from sglang.srt.utils import kill_process_tree
 import uvicorn
 
 from sglang.multimodal_gen.runtime.entrypoints.http_server import create_app
@@ -24,6 +26,23 @@ def launch_server(server_args: ServerArgs, launch_http_server: bool = True):
 
     # Start a new server with multiple worker processes
     logger.info("Starting server...")
+
+    if True:  # Keep this check for internal code compatibility
+        # Register the signal handler.
+        # The child processes will send SIGQUIT to this process when any error happens
+        # This process then clean up the whole process tree
+        # Note: This sigquit handler is used in the launch phase, and may be replaced by
+        # the running_phase_sigquit_handler in the tokenizer manager after the grpc server is launched.
+        def launch_phase_sigquit_handler(signum, frame):
+            logger.error(
+                "Received sigquit from a child process. It usually means the child failed."
+            )
+            kill_process_tree(os.getpid())
+
+        signal.signal(signal.SIGQUIT, launch_phase_sigquit_handler)
+
+    # # Set mp start method
+    mp.set_start_method("spawn", force=True)
 
     num_gpus = server_args.num_gpus
     processes = []

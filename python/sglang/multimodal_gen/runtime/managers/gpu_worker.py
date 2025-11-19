@@ -64,13 +64,13 @@ class GPUWorker:
         """Initialize the device and load the model."""
         print(f"[DEBUG] Worker {self.rank}: init_device_and_model called", flush=True)
         logger.info(f"Worker {self.rank}: init_device_and_model called", main_process_only=False)
-        
+
         setproctitle(f"sgl_diffusion::scheduler:{self.local_rank}")
         print(f"[DEBUG] Worker {self.rank}: Process title set", flush=True)
         logger.info(f"Worker {self.rank}: Process title set", main_process_only=False)
-        
+
         from sglang.multimodal_gen.runtime.utils.common import set_device
-        
+
         print(f"[DEBUG] Worker {self.rank}: Before set_device({self.local_rank})", flush=True)
         logger.info(f"Worker {self.rank}: Before set_device({self.local_rank})", main_process_only=False)
         set_device(self.local_rank)
@@ -85,12 +85,51 @@ class GPUWorker:
         os.environ["LOCAL_RANK"] = str(self.local_rank)
         os.environ["RANK"] = str(self.rank)
         os.environ["WORLD_SIZE"] = str(self.server_args.num_gpus)
+        # ENV_CCL_ZE_IPC_EXCHANGE = os.getenv("CCL_ZE_IPC_EXCHANGE", "pidfd")
+        # ENV_CCL_ATL_TRANSPORT = os.getenv("CCL_ATL_TRANSPORT", "ofi")
+        ENV_LOCAL_WORLD_SIZE = os.getenv(
+            "LOCAL_WORLD_SIZE", str(self.server_args.num_gpus)
+        )
+        # os.environ["CCL_ZE_IPC_EXCHANGE"] = ENV_CCL_ZE_IPC_EXCHANGE
+        # os.environ["CCL_ATL_TRANSPORT"] = ENV_CCL_ATL_TRANSPORT
+        # os.environ["CCL_SYCL_CCL_BARRIER"] = "1"
+        # os.environ["CCL_SYCL_ALLTOALL_ARC_LL"] = "1"
+        os.environ["LOCAL_WORLD_SIZE"] = ENV_LOCAL_WORLD_SIZE
+        os.environ["LOCAL_RANK"] = str(self.local_rank)
+
+        from sglang.bench_serving import set_ulimit
+        set_ulimit()
+
         print(
             f"[DEBUG] Worker {self.rank}: Environment variables set",
             flush=True
         )
         # Initialize the distributed environment
         print(f"[DEBUG] Worker {self.rank}: Calling maybe_init...", flush=True)
+
+        import socket
+        def _get_open_port() -> int:
+            port = 18001
+            if port is not None:
+                while True:
+                    try:
+                        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                            s.bind(("", port))
+                            return port
+                    except OSError:
+                        port += 1  # Increment port number if already in use
+                        logger.info("Port %d is already in use, trying port %d", port - 1, port)
+            # try ipv4
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    s.bind(("", 0))
+                    return s.getsockname()[1]
+            except OSError:
+                # try ipv6
+                with socket.socket(socket.AF_INET6, socket.SOCK_STREAM) as s:
+                    s.bind(("", 0))
+                    return s.getsockname()[1]
+        
         maybe_init_distributed_environment_and_model_parallel(
             tp_size=self.server_args.tp_size,
             enable_cfg_parallel=self.server_args.enable_cfg_parallel,
@@ -98,10 +137,13 @@ class GPUWorker:
             ring_degree=self.server_args.ring_degree,
             sp_size=self.server_args.sp_degree,
             dp_size=self.server_args.dp_size,
-            # distributed_init_method=f"tcp://localhost:{self.master_port}",
+            # distributed_init_method=f"tcp://127.0.0.1:{_get_open_port()}",
         )
+
+        torch.distributed.all_to_all_single(torch.zeros(self.server_args.ulysses_degree).xpu(), torch.zeros(self.server_args.ulysses_degree).xpu(), group=None)
+
         print(f"[DEBUG] Worker {self.rank}: Returned from maybe_init", flush=True)
-        torch.xpu.synchronize()
+        # torch.xpu.synchronize()
         print(f"[DEBUG] Worker {self.rank}: Distributed environment initialized.", flush=True)
         logger.info(f"Worker {self.rank}: Distributed environment initialized.", main_process_only=False)
 
@@ -120,15 +162,15 @@ class GPUWorker:
         import torch.distributed as dist
         rank = dist.get_rank() if dist.is_initialized() else 0
         print(f"[DEBUG] Worker {rank}: execute_forward called with {len(batch) if batch else 0} requests", flush=True)
-        
+
         assert self.pipeline is not None
         # TODO: dealing with first req for now
         req = batch[0]
-        
+
         print(f"[DEBUG] Worker {rank}: Calling pipeline.forward()", flush=True)
         output_batch = self.pipeline.forward(req, server_args)
         print(f"[DEBUG] Worker {rank}: pipeline.forward() completed", flush=True)
-        
+
         if req.perf_logger:
             logging_info = getattr(output_batch, "logging_info", None) or getattr(
                 req, "logging_info", None

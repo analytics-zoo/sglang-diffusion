@@ -264,14 +264,16 @@ def init_distributed_environment(
 
         rank = int(os.environ.get("RANK", -1))
         world_size = int(os.environ.get("WORLD_SIZE", -1))
+        torch.xpu.set_device(local_rank)
         torch.distributed.init_process_group(
             backend=backend,
-            init_method=f"tcp://localhost:29500",
+            # init_method=distributed_init_method,
             world_size=world_size,
-            rank=rank,
+            rank=local_rank,
             # local_rank=local_rank,
             **extra_args,
         )
+        device_mesh = torch.distributed.device_mesh.init_device_mesh("xpu", mesh_shape=(world_size,))
     # set the local rank
     # local_rank is not available in torch ProcessGroup,
     # see https://github.com/pytorch/pytorch/issues/122816

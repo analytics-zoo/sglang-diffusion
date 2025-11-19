@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 from typing import Any
 
+import os
 import zmq
 
 from sglang.multimodal_gen.runtime.managers.gpu_worker import GPUWorker
@@ -47,6 +48,7 @@ class Scheduler:
                 self.context, zmq.REP, endpoint, True
             )
             logger.info(f"Scheduler bind at endpoint: {actual_endpoint}")
+            os.environ["_SGLANG_ENDPOINT"] = actual_endpoint
         else:
             self.receiver = None
 

@@ -110,7 +110,7 @@ class XpuPlatform(Platform):
         
         # XPU-specific backends that are not supported
         unsupported_backends = [
-            AttentionBackendEnum.FA3,
+            AttentionBackendEnum.FA,
             AttentionBackendEnum.SLIDING_TILE_ATTN,
             AttentionBackendEnum.SAGE_ATTN,
             AttentionBackendEnum.SAGE_ATTN_THREE,
