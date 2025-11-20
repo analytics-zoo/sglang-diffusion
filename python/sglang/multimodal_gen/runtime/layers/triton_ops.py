@@ -12,10 +12,10 @@ from torch import Tensor
 @triton.autotune(
     configs=[
         triton.Config({"BLOCK_N": 64}, num_warps=2),
-        triton.Config({"BLOCK_N": 128}, num_warps=4),
-        triton.Config({"BLOCK_N": 256}, num_warps=4),
-        triton.Config({"BLOCK_N": 512}, num_warps=4),
-        triton.Config({"BLOCK_N": 1024}, num_warps=8),
+        # triton.Config({"BLOCK_N": 128}, num_warps=4),
+        # triton.Config({"BLOCK_N": 256}, num_warps=4),
+        # triton.Config({"BLOCK_N": 512}, num_warps=4),
+        # triton.Config({"BLOCK_N": 1024}, num_warps=8),
     ],
     key=["inner_dim"],
 )

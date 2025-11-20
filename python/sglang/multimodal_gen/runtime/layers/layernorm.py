@@ -373,11 +373,14 @@ class ScaleResidualLayerNormScaleShift(nn.Module):
         #     scale,
         #     shift,
         # )
+        device = x.device
+        print(f"[DEBUG] Rank {device} fuse_scale_shift_kernel start", flush=True)
         modulated = fuse_scale_shift_kernel(
             normalized,
             scale,
             shift,
         )
+        print(f"[DEBUG] Rank {device} fuse_scale_shift_kernel finished", flush=True)
         return modulated, residual_output
 
 

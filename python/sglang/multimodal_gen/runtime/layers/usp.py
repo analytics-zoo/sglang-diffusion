@@ -77,16 +77,17 @@ def _usp_all_to_all_single(x: torch.Tensor) -> torch.Tensor:
     backend = dist.get_backend(ulysses_pg)
     if backend == 'xccl':
         print(f"[DEBUG] Rank {rank}: XCCL backend detected, using fallback implementation", flush=True)
-        x = ft_c_all_to_all_single_with_fallback(
-            x, output_split_sizes=None, input_split_sizes=None, group=ulysses_pg
-        )
+        # x = ft_c_all_to_all_single_with_fallback(
+        #     x, output_split_sizes=None, input_split_sizes=None, group=ulysses_pg
+        # )
 
-        # x = x.reshape((world_size, -1))
+        x = x.reshape((world_size, -1))
         # # x = x.repeat_interleave(world_size)
         # # x = torch.rand((world_size), dtype=x.dtype, device=x.device)
-        # output = torch.empty_like(x)
-        # dist.all_to_all_single(output, x, group=None)
-        # x = output.reshape(x_shape)
+        output = torch.empty_like(x)
+        dist.all_to_all_single(output, x, group=None)
+        x = output.reshape(x_shape)
+        del output
 
         # tmp_x = x[:world_size]
         # tmp_x = x
@@ -98,6 +99,7 @@ def _usp_all_to_all_single(x: torch.Tensor) -> torch.Tensor:
         print(f"[DEBUG] Rank {rank}: Fallback all_to_all_single succeeded", flush=True)
 
     print(f"[DEBUG] Rank {rank}: After all_to_all_single call, waiting for tensor...", flush=True)
+    # torch.xpu.empty_cache()
     print(f"[DEBUG] Rank {rank}: Tensor wait completed", flush=True)
     # print(f"[DEBUG] Rank {rank}: Completed USP all-to-all-single operation, output shape: {x.shape}, output first element: {x[0].item()}", flush=True)
 
@@ -146,7 +148,9 @@ def _usp_input_all_to_all(x: torch.Tensor, head_dim: int = 1) -> torch.Tensor:
     # [b, h, s, d] -> [h, b, s, d]
     x_c = x_c.permute(1, 0, 2, 3).contiguous()
     # all-to-all along h
+    print(f"[DEBUG] Rank {x_c.device} Input all to all start", flush=True)
     x_c = _usp_all_to_all_single(x_c)
+    print(f"[DEBUG] Rank {x_c.device} Input all to all completed", flush=True)
     # -> [b, h // world, s * world, d]
     x_c = (
         x_c.reshape(world_size, h // world_size, b, -1, d)
@@ -203,7 +207,9 @@ def _usp_output_all_to_all(x: torch.Tensor, head_dim: int = 1) -> torch.Tensor:
 
     # [b, h, s, d] -> [s, b, h, d]
     x_c = x_c.permute(2, 0, 1, 3).contiguous()
+    print(f"[DEBUG] Rank {x_c.device} Output all to all start", flush=True)
     x_c = _usp_all_to_all_single(x_c)
+    print(f"[DEBUG] Rank {x_c.device} Output all to all completed", flush=True)
     # -> [b, h * world, s // world, d]
     x_c = (
         x_c.reshape(world_size, s // world_size, b, -1, d)

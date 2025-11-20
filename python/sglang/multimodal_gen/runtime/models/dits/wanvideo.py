@@ -345,6 +345,7 @@ class WanTransformerBlock(nn.Module):
         temb: torch.Tensor,
         freqs_cis: tuple[torch.Tensor, torch.Tensor],
     ) -> torch.Tensor:
+        device = hidden_states.device
         if hidden_states.dim() == 4:
             hidden_states = hidden_states.squeeze(1)
         bs, seq_length, _ = hidden_states.shape
@@ -371,6 +372,7 @@ class WanTransformerBlock(nn.Module):
         assert shift_msa.dtype == torch.float32
 
         # 1. Self-attention
+        print(f"[DEBUG] Rank {device} Self-attention start", flush=True)
         norm1 = self.norm1(hidden_states.float())
         norm_hidden_states = (norm1 * (1 + scale_msa) + shift_msa).to(orig_dtype)
         query, _ = self.to_q(norm_hidden_states)
@@ -391,14 +393,18 @@ class WanTransformerBlock(nn.Module):
         query, key = _apply_rotary_emb(
             query, cos, sin, is_neox_style=False
         ), _apply_rotary_emb(key, cos, sin, is_neox_style=False)
+        print(f"[DEBUG] Rank {device} attn1 start", flush=True)
         attn_output, _ = self.attn1(query, key, value)
+        print(f"[DEBUG] Rank {device} attn1 finished", flush=True)
         attn_output = attn_output.flatten(2)
+        print(f"[DEBUG] Rank {device} to_out start", flush=True)
         attn_output, _ = self.to_out(attn_output)
         attn_output = attn_output.squeeze(1)
 
         null_shift = null_scale = torch.zeros(
             (1,), device=hidden_states.device, dtype=hidden_states.dtype
         )
+        print(f"[DEBUG] Rank {device} self_attn_residual_norm start", flush=True)
         norm_hidden_states, hidden_states = self.self_attn_residual_norm(
             hidden_states, attn_output, gate_msa, null_shift, null_scale
         )
@@ -407,6 +413,7 @@ class WanTransformerBlock(nn.Module):
         ), hidden_states.to(orig_dtype)
 
         # 2. Cross-attention
+        print(f"[DEBUG] Rank {device} Cross-attention start", flush=True)
         attn_output = self.attn2(
             norm_hidden_states, context=encoder_hidden_states, context_lens=None
         )
@@ -418,6 +425,7 @@ class WanTransformerBlock(nn.Module):
         ), hidden_states.to(orig_dtype)
 
         # 3. Feed-forward
+        print(f"[DEBUG] Rank {device} Feed-forward start", flush=True)
         ff_output = self.ffn(norm_hidden_states)
         hidden_states = self.mlp_residual(hidden_states, ff_output, c_gate_msa)
         hidden_states = hidden_states.to(orig_dtype)
