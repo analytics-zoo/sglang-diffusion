@@ -82,20 +82,20 @@ def _usp_all_to_all_single(x: torch.Tensor) -> torch.Tensor:
         # )
 
         x = x.reshape((world_size, -1))
-        # # x = x.repeat_interleave(world_size)
-        # # x = torch.rand((world_size), dtype=x.dtype, device=x.device)
+        # # # x = x.repeat_interleave(world_size)
+        # # # x = torch.rand((world_size), dtype=x.dtype, device=x.device)
         output = torch.empty_like(x)
-        dist.all_to_all_single(output, x, group=None)
+        dist.all_to_all_single(output, x, group=ulysses_pg)
         x = output.reshape(x_shape)
-        del output
+        # del output
 
         # tmp_x = x[:world_size]
         # tmp_x = x
         # tmp_x = ft_c.all_to_all_single(
-            # tmp_x, output_split_sizes=None, input_split_sizes=None, group=ulysses_pg
+        #     tmp_x, output_split_sizes=None, input_split_sizes=None, group=ulysses_pg
         # )
         # tmp_x = _maybe_wait(tmp_x)
-        # x = tmp_x.reshape(x_shape)
+        # x = x.reshape(x_shape)
         print(f"[DEBUG] Rank {rank}: Fallback all_to_all_single succeeded", flush=True)
 
     print(f"[DEBUG] Rank {rank}: After all_to_all_single call, waiting for tensor...", flush=True)
@@ -126,10 +126,11 @@ def _usp_input_all_to_all(x: torch.Tensor, head_dim: int = 1) -> torch.Tensor:
     Returns:
         Tensor with the same dim order as input, with heads sharded and sequence gathered.
     """
+    print(f"[DEBUG] Rank {x.device} Input all to all enter", flush=True)
     world_size = get_ulysses_parallel_world_size()
     if world_size <= 1:
         return x
-
+    print(f"[DEBUG] Rank {x.device} {world_size}", flush=True)
     assert x.ndim == 4, f"x must have 4 dimensions, got {x.ndim}"
     assert head_dim in (1, 2), f"head_dim must be 1 or 2, got {head_dim}"
     seq_dim = 1 if head_dim == 2 else 2
@@ -138,7 +139,8 @@ def _usp_input_all_to_all(x: torch.Tensor, head_dim: int = 1) -> torch.Tensor:
     if head_dim == 1 and seq_dim == 2:
         x_c = x
     else:
-        x_c = x.permute(0, head_dim, seq_dim, 3).contiguous()
+        x_c = x.permute(0, 2, 1, 3)#.contiguous()
+        x_c = x_c.clone().contiguous()
 
     b, h, s, d = x_c.shape
     assert (
@@ -150,7 +152,7 @@ def _usp_input_all_to_all(x: torch.Tensor, head_dim: int = 1) -> torch.Tensor:
     # all-to-all along h
     print(f"[DEBUG] Rank {x_c.device} Input all to all start", flush=True)
     x_c = _usp_all_to_all_single(x_c)
-    print(f"[DEBUG] Rank {x_c.device} Input all to all completed", flush=True)
+    print(f"[DEBUG] Rank {x_c.device} Input all to all completed {x_c.shape}", flush=True)
     # -> [b, h // world, s * world, d]
     x_c = (
         x_c.reshape(world_size, h // world_size, b, -1, d)

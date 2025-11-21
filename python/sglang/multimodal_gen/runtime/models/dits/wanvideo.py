@@ -430,6 +430,8 @@ class WanTransformerBlock(nn.Module):
         hidden_states = self.mlp_residual(hidden_states, ff_output, c_gate_msa)
         hidden_states = hidden_states.to(orig_dtype)
 
+        print(f"[DEBUG] Rank {device} Feed-forward end", flush=True)
+
         return hidden_states
 
 
