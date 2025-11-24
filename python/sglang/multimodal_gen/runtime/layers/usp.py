@@ -77,25 +77,13 @@ def _usp_all_to_all_single(x: torch.Tensor) -> torch.Tensor:
     backend = dist.get_backend(ulysses_pg)
     if backend == 'xccl':
         print(f"[DEBUG] Rank {rank}: XCCL backend detected, using fallback implementation", flush=True)
-        # x = ft_c_all_to_all_single_with_fallback(
-        #     x, output_split_sizes=None, input_split_sizes=None, group=ulysses_pg
-        # )
 
-        #x = x.reshape((world_size, -1))
-        # # # x = x.repeat_interleave(world_size)
-        # # # x = torch.rand((world_size), dtype=x.dtype, device=x.device)
-        #output = torch.empty_like(x)
-        #dist.all_to_all_single(output, x, group=ulysses_pg)
-        #x = output.reshape(x_shape)
-        # del output
-
-        # tmp_x = x[:world_size]
         tmp_x = x
-        tmp_x = ft_c.all_to_all_single(
-            tmp_x, output_split_sizes=None, input_split_sizes=None, group=ulysses_pg
+        x = ft_c.all_to_all_single(
+            x, output_split_sizes=None, input_split_sizes=None, group=ulysses_pg
         )
-        tmp_x = _maybe_wait(tmp_x)
-        x = tmp_x.reshape(x_shape)
+        x = _maybe_wait(x)
+        x = x.reshape(x_shape)
         print(f"[DEBUG] Rank {rank}: Fallback all_to_all_single succeeded", flush=True)
 
     print(f"[DEBUG] Rank {rank}: After all_to_all_single call, waiting for tensor...", flush=True)
