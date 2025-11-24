@@ -138,8 +138,6 @@ def fuse_scale_shift_kernel(
 ):
     # assert (x.is_cuda or x.is_xpu) and (scale.is_cuda or scale.is_xpu)
     # assert x.is_contiguous()
-    device = x.device
-    print(f"[DEBUG] Rank {device} {x.shape}", flush=True)
     B, L, C = x.shape
     output = torch.empty_like(x)
 
@@ -159,8 +157,6 @@ def fuse_scale_shift_kernel(
         scale_reshaped = scale.squeeze(2).reshape(-1, C).contiguous()
         shift_reshaped = shift.squeeze(2).reshape(-1, C).contiguous()
         
-        device = x.device
-        print(f"[DEBUG] Rank {device} _fused_scale_shift_4d_kernel start", flush=True)
         _fused_scale_shift_4d_kernel[grid](
             output_2d,
             x_2d,
@@ -172,7 +168,6 @@ def fuse_scale_shift_kernel(
             num_frames,
             frame_seqlen,
         )
-        print(f"[DEBUG] Rank {device} _fused_scale_shift_4d_kernel fin", flush=True)
     else:
         # 2D: [B, C] or [1, C]  -> treat as [B, 1, C] and broadcast over L
         # 3D: [B, L, C] (or broadcastable variants like [B, 1, C], [1, L, C], [1, 1, C])
@@ -211,19 +206,14 @@ def fuse_scale_shift_kernel(
         else:
             sh_sb = sh_sl = sh_sc = 0
 
-        print(f"[DEBUG] Rank {device} fuse_scale_shift_kernel_blc_opt start", flush=True)
-
         # If both scalars and both zero, copy fast-path
         if need_scale_scalar and need_shift_scalar:
             # if (scale_blc.abs().max() == 0) and (shift_blc.abs().max() == 0):
             if True:
-                print(f"[DEBUG] Rank {device} fuse_scale_shift_kernel_blc_opt bypass", flush=True)
                 output.copy_(x)
                 return output
 
         grid = (triton.cdiv(L, block_l), triton.cdiv(C, block_c), B)
-        device = x.device
-        print(f"[DEBUG] Rank {device} fuse_scale_shift_kernel_blc_opt start", flush=True)
         fuse_scale_shift_kernel_blc_opt[grid](
             x,
             shift_blc if need_shift_scalar else shift_exp,
@@ -248,7 +238,6 @@ def fuse_scale_shift_kernel(
             num_warps=4,
             num_stages=2,
         )
-        print(f"[DEBUG] Rank {device} fuse_scale_shift_kernel_blc_opt fin", flush=True)
     return output
 
 

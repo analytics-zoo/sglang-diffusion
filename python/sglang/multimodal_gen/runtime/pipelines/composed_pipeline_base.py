@@ -98,28 +98,19 @@ class ComposedPipelineBase(ABC):
         return ParallelExecutor(server_args=server_args)
 
     def post_init(self) -> None:
-        import torch.distributed as dist
-        rank = dist.get_rank() if dist.is_initialized() else 0
-        print(f"[DEBUG] Rank {rank}: post_init() started", flush=True)
-        
         assert self.server_args is not None, "server_args must be set"
         if self.post_init_called:
-            print(f"[DEBUG] Rank {rank}: post_init() already called, returning early", flush=True)
             return
         self.post_init_called = True
 
-        print(f"[DEBUG] Rank {rank}: Calling initialize_pipeline()", flush=True)
         self.initialize_pipeline(self.server_args)
-        print(f"[DEBUG] Rank {rank}: initialize_pipeline() completed", flush=True)
         
         if self.server_args.enable_torch_compile:
             self.modules["transformer"] = torch.compile(self.modules["transformer"])
             logger.info("Torch Compile enabled for DiT")
 
-        print(f"[DEBUG] Rank {rank}: Calling create_pipeline_stages()", flush=True)
         logger.info("Creating pipeline stages...")
         self.create_pipeline_stages(self.server_args)
-        print(f"[DEBUG] Rank {rank}: create_pipeline_stages() completed", flush=True)
 
     @classmethod
     def from_pretrained(

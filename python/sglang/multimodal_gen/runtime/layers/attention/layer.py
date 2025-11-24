@@ -372,12 +372,8 @@ class USPAttention(nn.Module):
         # Ulysses-style All-to-All for sequence/head sharding
         if get_ulysses_parallel_world_size() > 1:
             # -> [B, S, H_local, D]
-            device = q.device
-            print(f"[DEBUG] Rank {device} q start", flush=True)
             q = _usp_input_all_to_all(q, head_dim=2)
-            print(f"[DEBUG] Rank {device} k start", flush=True)
             k = _usp_input_all_to_all(k, head_dim=2)
-            print(f"[DEBUG] Rank {device} v start", flush=True)
             v = _usp_input_all_to_all(v, head_dim=2)
 
         # Ring Attention within subgroups or local attention

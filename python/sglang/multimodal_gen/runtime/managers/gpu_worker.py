@@ -62,19 +62,15 @@ class GPUWorker:
 
     def init_device_and_model(self) -> None:
         """Initialize the device and load the model."""
-        print(f"[DEBUG] Worker {self.rank}: init_device_and_model called", flush=True)
         logger.info(f"Worker {self.rank}: init_device_and_model called", main_process_only=False)
 
         setproctitle(f"sgl_diffusion::scheduler:{self.local_rank}")
-        print(f"[DEBUG] Worker {self.rank}: Process title set", flush=True)
         logger.info(f"Worker {self.rank}: Process title set", main_process_only=False)
 
         from sglang.multimodal_gen.runtime.utils.common import set_device
 
-        print(f"[DEBUG] Worker {self.rank}: Before set_device({self.local_rank})", flush=True)
         logger.info(f"Worker {self.rank}: Before set_device({self.local_rank})", main_process_only=False)
         set_device(self.local_rank)
-        print(f"[DEBUG] Worker {self.rank}: After set_device", flush=True)
         logger.info(
             f"{CYAN}Worker {self.rank}: Initializing device {self.local_rank}{RESET}",
             main_process_only=False
@@ -100,12 +96,7 @@ class GPUWorker:
         from sglang.bench_serving import set_ulimit
         set_ulimit()
 
-        print(
-            f"[DEBUG] Worker {self.rank}: Environment variables set",
-            flush=True
-        )
         # Initialize the distributed environment
-        print(f"[DEBUG] Worker {self.rank}: Calling maybe_init...", flush=True)
 
         import socket
         def _get_open_port() -> int:
@@ -142,14 +133,10 @@ class GPUWorker:
 
         torch.distributed.all_to_all_single(torch.zeros(self.server_args.ulysses_degree).xpu(), torch.zeros(self.server_args.ulysses_degree).xpu(), group=None)
 
-        print(f"[DEBUG] Worker {self.rank}: Returned from maybe_init", flush=True)
         # torch.xpu.synchronize()
-        print(f"[DEBUG] Worker {self.rank}: Distributed environment initialized.", flush=True)
         logger.info(f"Worker {self.rank}: Distributed environment initialized.", main_process_only=False)
 
-        print(f"[DEBUG] Worker {self.rank}: Building pipeline...", flush=True)
         self.pipeline = build_pipeline(self.server_args)
-        print(f"[DEBUG] Worker {self.rank}: Pipeline built", flush=True)
 
         logger.info(
             f"Worker {self.rank}: Initialized device, model, and distributed environment."
@@ -161,15 +148,12 @@ class GPUWorker:
         """
         import torch.distributed as dist
         rank = dist.get_rank() if dist.is_initialized() else 0
-        print(f"[DEBUG] Worker {rank}: execute_forward called with {len(batch) if batch else 0} requests", flush=True)
 
         assert self.pipeline is not None
         # TODO: dealing with first req for now
         req = batch[0]
 
-        print(f"[DEBUG] Worker {rank}: Calling pipeline.forward()", flush=True)
         output_batch = self.pipeline.forward(req, server_args)
-        print(f"[DEBUG] Worker {rank}: pipeline.forward() completed", flush=True)
 
         if req.perf_logger:
             logging_info = getattr(output_batch, "logging_info", None) or getattr(
@@ -183,6 +167,7 @@ class GPUWorker:
                         "Failed to log stage metrics for request %s", req.request_id
                     )
             req.perf_logger.log_total_duration("total_inference_time")
+
         return output_batch
 
     def set_lora_adapter(

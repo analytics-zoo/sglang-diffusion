@@ -59,16 +59,11 @@ class ParallelExecutor(PipelineExecutor):
         cfg_rank = get_classifier_free_guidance_rank()
         cfg_group = get_cfg_group()
 
-        # DEBUG: Log which rank is executing
-        print(f"[DEBUG] Rank {rank}: ParallelExecutor.execute() called with {len(stages)} stages", flush=True)
-
         # TODO: decide when to gather on main when CFG_PARALLEL -> MAIN_RANK_ONLY
         for stage_idx, stage in enumerate(stages):
             with Timer(stage.__class__.__name__):
                 paradigm = stage.parallelism_type
                 
-                print(f"[DEBUG] Rank {rank}: Executing stage {stage_idx}: {stage.__class__.__name__}, paradigm={paradigm}", flush=True)
-
                 if paradigm == StageParallelismType.MAIN_RANK_ONLY:
                     if rank == 0:
                         batch = stage(batch, server_args)
@@ -96,8 +91,6 @@ class ParallelExecutor(PipelineExecutor):
                     # For REPLICATED mode, all ranks execute the same operation
                     # No need to broadcast - each rank should already have the batch
                     # (or the batch was already broadcast in a previous stage)
-                    print(f"[DEBUG] Rank {rank}: Executing stage forward on REPLICATED paradigm", flush=True)
                     batch = stage(batch, server_args)
-                    print(f"[DEBUG] Rank {rank}: Completed stage forward on REPLICATED paradigm", flush=True)
 
         return batch

@@ -126,9 +126,6 @@ class Scheduler:
             # 1: receive requests
             try:
                 reqs = self.recv_reqs()
-                import torch.distributed as dist
-                rank = dist.get_rank() if dist.is_initialized() else 0
-                print(f"[DEBUG] Scheduler Rank {rank}: Received {len(reqs) if reqs else 0} requests", flush=True)
             except Exception as e:
                 logger.error(
                     f"Error receiving requests in scheduler event loop: {e}",
@@ -138,9 +135,7 @@ class Scheduler:
 
             # 2: execute, make sure a reply is always sent
             try:
-                print(f"[DEBUG] Scheduler Rank {rank}: Calling worker.execute_forward()", flush=True)
                 output_batch = self.worker.execute_forward(reqs, self.server_args)
-                print(f"[DEBUG] Scheduler Rank {rank}: worker.execute_forward() completed", flush=True)
             except Exception as e:
                 logger.error(
                     f"Error executing forward in scheduler event loop: {e}",
