@@ -215,7 +215,7 @@ class LayerNorm(CustomOp):
         x = x.view(-1, self.hidden_size)
         return self.forward_triton(x).view(shape)
 
-    @torch.compile(backend="inductor")
+    # @torch.compile(backend="inductor")
     def forward_native(
         self,
         x: torch.Tensor,
@@ -366,7 +366,7 @@ class ScaleResidualLayerNormScaleShift(nn.Module):
         # residual_output.shape: [batch_size, seq_len, inner_dim]
 
         # Apply normalization
-        normalized = self.norm(residual_output)
+        normalized = self.norm(residual_output.contiguous())
 
         # modulated = fused_scale_shift(
         #     normalized,
