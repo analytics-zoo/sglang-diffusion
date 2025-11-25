@@ -366,7 +366,7 @@ class ScaleResidualLayerNormScaleShift(nn.Module):
         # residual_output.shape: [batch_size, seq_len, inner_dim]
 
         # Apply normalization
-        normalized = self.norm(residual_output.contiguous())
+        normalized = self.norm(residual_output)
 
         # modulated = fused_scale_shift(
         #     normalized,

@@ -651,7 +651,7 @@ class DenoisingStage(PipelineStage):
         # Offload the unused model if it's on CUDA
         if (
             model_to_offload is not None
-            and next(model_to_offload.parameters()).device.type == "cuda"
+            and next(model_to_offload.parameters()).device.type == "xpu"
         ):
             model_to_offload.to("cpu")
 

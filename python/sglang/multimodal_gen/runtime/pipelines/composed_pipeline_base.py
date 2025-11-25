@@ -345,15 +345,11 @@ class ComposedPipelineBase(ABC):
         """
         import torch.distributed as dist
         rank = dist.get_rank() if dist.is_initialized() else 0
-        print(f"[DEBUG] Rank {rank}: ComposedPipelineBase.forward() called, post_init_called={self.post_init_called}", flush=True)
-        
+
         if not self.post_init_called:
-            print(f"[DEBUG] Rank {rank}: Calling post_init()", flush=True)
             self.post_init()
-            print(f"[DEBUG] Rank {rank}: post_init() completed", flush=True)
 
         # Execute each stage
-        print(f"[DEBUG] Rank {rank}: About to call executor.execute()", flush=True)
         logger.info(
             "Running pipeline stages: %s",
             list(self._stage_name_mapping.keys()),

@@ -62,34 +62,17 @@ class GPUWorker:
 
     def init_device_and_model(self) -> None:
         """Initialize the device and load the model."""
-        logger.info(f"Worker {self.rank}: init_device_and_model called", main_process_only=False)
-
         setproctitle(f"sgl_diffusion::scheduler:{self.local_rank}")
-        logger.info(f"Worker {self.rank}: Process title set", main_process_only=False)
-
         from sglang.multimodal_gen.runtime.utils.common import set_device
-
-        logger.info(f"Worker {self.rank}: Before set_device({self.local_rank})", main_process_only=False)
-        set_device(self.local_rank)
-        logger.info(
-            f"{CYAN}Worker {self.rank}: Initializing device {self.local_rank}{RESET}",
-            main_process_only=False
-        )
         # Set environment variables for distributed initialization
         os.environ["MASTER_ADDR"] = "localhost"
         os.environ["MASTER_PORT"] = str(self.master_port)
         os.environ["LOCAL_RANK"] = str(self.local_rank)
         os.environ["RANK"] = str(self.rank)
         os.environ["WORLD_SIZE"] = str(self.server_args.num_gpus)
-        # ENV_CCL_ZE_IPC_EXCHANGE = os.getenv("CCL_ZE_IPC_EXCHANGE", "pidfd")
-        # ENV_CCL_ATL_TRANSPORT = os.getenv("CCL_ATL_TRANSPORT", "ofi")
         ENV_LOCAL_WORLD_SIZE = os.getenv(
             "LOCAL_WORLD_SIZE", str(self.server_args.num_gpus)
         )
-        # os.environ["CCL_ZE_IPC_EXCHANGE"] = ENV_CCL_ZE_IPC_EXCHANGE
-        # os.environ["CCL_ATL_TRANSPORT"] = ENV_CCL_ATL_TRANSPORT
-        # os.environ["CCL_SYCL_CCL_BARRIER"] = "1"
-        # os.environ["CCL_SYCL_ALLTOALL_ARC_LL"] = "1"
         os.environ["LOCAL_WORLD_SIZE"] = ENV_LOCAL_WORLD_SIZE
         os.environ["LOCAL_RANK"] = str(self.local_rank)
 
@@ -97,30 +80,6 @@ class GPUWorker:
         set_ulimit()
 
         # Initialize the distributed environment
-
-        import socket
-        def _get_open_port() -> int:
-            port = 18001
-            if port is not None:
-                while True:
-                    try:
-                        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                            s.bind(("", port))
-                            return port
-                    except OSError:
-                        port += 1  # Increment port number if already in use
-                        logger.info("Port %d is already in use, trying port %d", port - 1, port)
-            # try ipv4
-            try:
-                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                    s.bind(("", 0))
-                    return s.getsockname()[1]
-            except OSError:
-                # try ipv6
-                with socket.socket(socket.AF_INET6, socket.SOCK_STREAM) as s:
-                    s.bind(("", 0))
-                    return s.getsockname()[1]
-        
         maybe_init_distributed_environment_and_model_parallel(
             tp_size=self.server_args.tp_size,
             enable_cfg_parallel=self.server_args.enable_cfg_parallel,
@@ -128,9 +87,9 @@ class GPUWorker:
             ring_degree=self.server_args.ring_degree,
             sp_size=self.server_args.sp_degree,
             dp_size=self.server_args.dp_size,
-            # distributed_init_method=f"tcp://127.0.0.1:{_get_open_port()}",
         )
 
+        # Warmup to ensure all_to_all on XPU
         torch.distributed.all_to_all_single(torch.zeros(self.server_args.ulysses_degree).xpu(), torch.zeros(self.server_args.ulysses_degree).xpu(), group=None)
 
         # torch.xpu.synchronize()
