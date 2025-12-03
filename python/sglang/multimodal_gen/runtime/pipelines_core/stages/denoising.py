@@ -651,10 +651,10 @@ class DenoisingStage(PipelineStage):
         if not server_args.dit_cpu_offload:
             return
 
-        # Offload the unused model if it's on CUDA
+        # Offload the unused model if it's on CUDA or XPU
         if (
             model_to_offload is not None
-            and next(model_to_offload.parameters()).device.type == "cuda"
+            and next(model_to_offload.parameters()).device.type in ["cuda", "xpu"]
         ):
             model_to_offload.to("cpu")
 

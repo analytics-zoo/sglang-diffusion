@@ -110,7 +110,7 @@ class DecodingStage(PipelineStage):
 
         # Decode latents
         with torch.autocast(
-            device_type="cuda", dtype=vae_dtype, enabled=vae_autocast_enabled
+            device_type="xpu", dtype=vae_dtype, enabled=vae_autocast_enabled
         ):
             try:
                 # TODO: make it more specific

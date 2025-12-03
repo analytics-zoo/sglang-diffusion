@@ -276,7 +276,12 @@ class TextEncoderLoader(ComponentLoader):
 
     def should_offload(self, server_args, model_config: ModelConfig | None = None):
         should_offload = server_args.text_encoder_cpu_offload
+        # For native models without FSDP, we still respect the cpu_offload flag
+        # to allow simple CPU offloading without FSDP sharding
+        if model_config is None:
+            return should_offload
         fsdp_shard_conditions = getattr(model_config, "_fsdp_shard_conditions", [])
+        # Only require fsdp_shard_conditions for FSDP-based offloading in customized loaders
         use_cpu_offload = should_offload and len(fsdp_shard_conditions) > 0
         return use_cpu_offload
 
@@ -484,6 +489,9 @@ class TextEncoderLoader(ComponentLoader):
 class ImageEncoderLoader(TextEncoderLoader):
     def should_offload(self, server_args, model_config: ModelConfig | None = None):
         should_offload = server_args.image_encoder_cpu_offload
+        # For native models without FSDP, we still respect the cpu_offload flag
+        if model_config is None:
+            return should_offload
         fsdp_shard_conditions = getattr(model_config, "_fsdp_shard_conditions", [])
         use_cpu_offload = should_offload and len(fsdp_shard_conditions) > 0
         return use_cpu_offload

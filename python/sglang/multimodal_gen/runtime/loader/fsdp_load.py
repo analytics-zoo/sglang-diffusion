@@ -258,7 +258,11 @@ def load_model_from_full_model_state_dict(
                 f"Parameter {target_param_name} not found in custom model state dict. The hf to custom mapping may be incorrect."
             )
         if not hasattr(meta_sharded_param, "device_mesh"):
-            full_tensor = full_tensor.to(device=device, dtype=param_dtype)
+            # When FSDP is not used, respect cpu_offload flag to avoid OOM
+            if cpu_offload:
+                full_tensor = full_tensor.to(device="cpu", dtype=param_dtype)
+            else:
+                full_tensor = full_tensor.to(device=device, dtype=param_dtype)
             # In cases where parts of the model aren't sharded, some parameters will be plain tensors
             sharded_tensor = full_tensor
         else:
@@ -292,9 +296,10 @@ def load_model_from_full_model_state_dict(
             )
         meta_sharded_param = meta_sd.get(new_param_name)
         if not hasattr(meta_sharded_param, "device_mesh"):
-            # Initialize with zeros
+            # Initialize with zeros, respecting cpu_offload flag
+            target_device = "cpu" if cpu_offload else device
             sharded_tensor = torch.zeros_like(
-                meta_sharded_param, device=device, dtype=param_dtype
+                meta_sharded_param, device=target_device, dtype=param_dtype
             )
         else:
             # Initialize with zeros and distribute

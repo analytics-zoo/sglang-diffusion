@@ -27,6 +27,30 @@ from sglang.multimodal_gen.runtime.utils.logging_utils import init_logger
 
 logger = init_logger(__name__)
 
+import dataclasses
+
+def encoder_output_to_device(output, device):
+    """Move encoder output to the specified device."""
+    if isinstance(output, torch.Tensor):
+        return output.to(device)
+    elif isinstance(output, (list, tuple)):
+        return type(output)(
+            o.to(device) for o in output
+        )
+    elif isinstance(output, BaseEncoderOutput):
+        return dataclasses.replace(
+            output,
+            hidden_states=encoder_output_to_device(output.hidden_states, device),
+            attention_mask=encoder_output_to_device(output.attention_mask, device),
+            pooler_output=encoder_output_to_device(output.pooler_output, device),
+            last_hidden_state=encoder_output_to_device(
+                output.last_hidden_state, device
+            ),
+            attentions=encoder_output_to_device(output.attentions, device),
+        )
+    else:
+        return output
+
 
 class TextEncodingStage(PipelineStage):
     """
@@ -256,6 +280,7 @@ class TextEncodingStage(PipelineStage):
             ).to(target_device)
 
             input_ids = text_inputs["input_ids"]
+            device = input_ids.device
             is_flux_v1 = isinstance(
                 server_args.pipeline_config, FluxPipelineConfig
             ) and not isinstance(server_args.pipeline_config, Flux2PipelineConfig)
@@ -266,12 +291,14 @@ class TextEncodingStage(PipelineStage):
             else:
                 attention_mask = text_inputs["attention_mask"]
             with set_forward_context(current_timestep=0, attn_metadata=None):
+                text_encoder_device = next(text_encoder.parameters()).device
                 outputs: BaseEncoderOutput = text_encoder(
-                    input_ids=input_ids,
-                    attention_mask=attention_mask,
+                    input_ids=input_ids.to(text_encoder_device),
+                    attention_mask=attention_mask.to(text_encoder_device),
                     output_hidden_states=True,
                     use_cache=False,
                 )
+
             prompt_embeds = postprocess_func(outputs, text_inputs)
             if dtype is not None:
                 prompt_embeds = prompt_embeds.to(dtype=dtype)
@@ -284,11 +311,15 @@ class TextEncodingStage(PipelineStage):
 
         # Shape results according to return_type
         if return_type == "list":
+            embeds_list = encoder_output_to_device(embeds_list, target_device)
+            pooled_embeds_list = encoder_output_to_device(pooled_embeds_list, target_device)
+            attn_masks_list = encoder_output_to_device(attn_masks_list, target_device)
             if return_attention_mask:
                 return embeds_list, attn_masks_list, pooled_embeds_list
             return embeds_list, pooled_embeds_list
 
         if return_type == "dict":
+            embeds_list = encoder_output_to_device(embeds_list, target_device)
             key_strs = [str(i) for i in indices]
             embeds_dict = {k: v for k, v in zip(key_strs, embeds_list, strict=False)}
             if return_attention_mask:
@@ -315,7 +346,11 @@ class TextEncodingStage(PipelineStage):
                         f"Cannot stack attention masks with differing shapes: {[list(m.shape) for m in attn_masks_list]}"
                     )
             stacked_masks = torch.stack(attn_masks_list, dim=0)
+            stacked_embeds = encoder_output_to_device(stacked_embeds, target_device)
+            stacked_masks = encoder_output_to_device(stacked_masks, target_device)
             return stacked_embeds, stacked_masks
+        
+        stacked_embeds = encoder_output_to_device(stacked_embeds, target_device)
         return stacked_embeds
 
     def verify_output(self, batch: Req, server_args: ServerArgs) -> VerificationResult:

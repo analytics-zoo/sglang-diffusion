@@ -259,7 +259,7 @@ class ServerArgs:
     output_type: str = "pil"
 
     # CPU offload parameters
-    dit_cpu_offload: bool = True
+    dit_cpu_offload: bool = False
     use_fsdp_inference: bool = False
     text_encoder_cpu_offload: bool = True
     image_encoder_cpu_offload: bool = True
@@ -888,9 +888,6 @@ class ServerArgs:
         ), f"Invalid execution mode: {self.mode}"
 
         # Validate workload type
-        assert isinstance(
-            self.workload_type, WorkloadType
-        ), f"Workload type must be a WorkloadType enum, got {type(self.workload_type)}"
         assert (
             self.workload_type in WorkloadType.choices()
         ), f"Invalid workload type: {self.workload_type}"

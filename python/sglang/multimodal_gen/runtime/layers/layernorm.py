@@ -66,7 +66,7 @@ class RMSNorm(CustomOp):
     ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         shape = x.shape
         x = x.view(-1, shape[-1])
-        if self.variance_size_override is not None:
+        if x.dtype == torch.float or self.variance_size_override is not None:
             return self.forward_native(x, residual)
         if residual is not None:
             fused_add_rmsnorm(x, residual, self.weight.data, self.variance_epsilon)
