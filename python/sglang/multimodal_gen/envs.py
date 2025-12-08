@@ -105,6 +105,11 @@ class PackagesEnvChecker:
     def check_flash_attn(self):
         if not torch.cuda.is_available():
             return False
+        if _is_xpu():
+            logger.info(
+                "Flash Attention library is not supported on XPU."
+            )
+            return False
         if _is_musa():
             logger.info(
                 "Flash Attention library is not supported on MUSA for the moment."
@@ -120,7 +125,7 @@ class PackagesEnvChecker:
             return False
 
     def check_long_ctx_attn(self):
-        if not torch.cuda.is_available():
+        if not torch.cuda.is_available() and not _is_xpu():
             return False
         try:
             return importlib.util.find_spec("yunchang") is not None
@@ -332,6 +337,8 @@ def get_torch_distributed_backend() -> str:
 def get_device(local_rank: int) -> torch.device:
     if torch.cuda.is_available():
         return torch.device("cuda", local_rank)
+    elif _is_xpu():
+        return torch.device("xpu", local_rank)
     elif _is_musa():
         return torch.device("musa", local_rank)
     elif _is_mps():

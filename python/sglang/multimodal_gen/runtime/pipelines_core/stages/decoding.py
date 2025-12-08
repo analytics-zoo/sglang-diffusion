@@ -109,8 +109,10 @@ class DecodingStage(PipelineStage):
         latents = server_args.pipeline_config.preprocess_decoding(latents)
 
         # Decode latents
+        from sglang.multimodal_gen.runtime.utils.common import get_device_type, is_gpu_alike
+        device_type_str = get_device_type() if is_gpu_alike() else "cpu"
         with torch.autocast(
-            device_type="xpu", dtype=vae_dtype, enabled=vae_autocast_enabled
+            device_type=device_type_str, dtype=vae_dtype, enabled=vae_autocast_enabled
         ):
             try:
                 # TODO: make it more specific

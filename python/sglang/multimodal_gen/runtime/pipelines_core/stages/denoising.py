@@ -579,11 +579,14 @@ class DenoisingStage(PipelineStage):
 
         logger.info("Starting Profiler...")
         # Build activities dynamically to avoid CUDA hangs when CUDA is unavailable
-        from sglang.multimodal_gen.runtime.utils.common import is_gpu_alike
+        from sglang.multimodal_gen.runtime.utils.common import is_cuda, is_gpu_alike, is_xpu
 
         activities = [torch.profiler.ProfilerActivity.CPU]
         if is_gpu_alike():
-            activities.append(torch.profiler.ProfilerActivity.CUDA)
+            if is_xpu():
+                activities.append(torch.profiler.ProfilerActivity.XPU)
+            elif is_cuda():
+                activities.append(torch.profiler.ProfilerActivity.CUDA)
 
         self.profiler = torch.profiler.profile(
             activities=activities,

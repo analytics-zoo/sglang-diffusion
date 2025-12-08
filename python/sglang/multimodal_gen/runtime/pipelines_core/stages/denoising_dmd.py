@@ -144,6 +144,8 @@ class DmdDenoisingStage(DenoisingStage):
         # Run denoising loop
         denoising_loop_start_time = time.time()
         self.start_profile(batch=batch)
+        from sglang.multimodal_gen.runtime.utils.common import get_device_type, is_gpu_alike
+        device_type_str = get_device_type() if is_gpu_alike() else "cpu"
         with self.progress_bar(total=len(timesteps)) as progress_bar:
             for i, t in enumerate(timesteps):
                 # Skip if interrupted
@@ -185,7 +187,7 @@ class DmdDenoisingStage(DenoisingStage):
 
                     # Predict noise residual
                     with torch.autocast(
-                        device_type="xpu",
+                        device_type=device_type_str,
                         dtype=target_dtype,
                         enabled=autocast_enabled,
                     ):
