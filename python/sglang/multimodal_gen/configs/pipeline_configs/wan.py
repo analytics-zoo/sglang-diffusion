@@ -25,7 +25,8 @@ logger = init_logger(__name__)
 
 def t5_postprocess_text(outputs: BaseEncoderOutput, _text_inputs) -> torch.Tensor:
     mask: torch.Tensor = outputs.attention_mask
-    hidden_state: torch.Tensor = outputs.last_hidden_state
+    # Temp walk around for hidden states shape mismatch for Wan2.1 1.3B
+    hidden_state: torch.Tensor = outputs.last_hidden_state.unsqueeze(0)
     seq_lens = mask.gt(0).sum(dim=1).long()
     assert torch.isnan(hidden_state).sum() == 0
     prompt_embeds = [u[:v] for u, v in zip(hidden_state, seq_lens, strict=True)]

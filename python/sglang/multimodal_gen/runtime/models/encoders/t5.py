@@ -305,7 +305,11 @@ class T5Attention(nn.Module):
         attention_mask: torch.Tensor,
         attn_metadata: AttentionMetadata | None = None,
     ) -> torch.Tensor:
-        bs, seq_len, _ = hidden_states.shape
+        # Temp walk around for hidden states shape mismatch for Wan2.1 1.3B
+        # bs, seq_len, _ = hidden_states.shape
+        bs = 1
+        seq_len = hidden_states.size(0)
+        
         num_seqs = bs
         n, c = self.n_heads, self.d_model // self.total_num_heads
         qkv, _ = self.qkv_proj(hidden_states)
