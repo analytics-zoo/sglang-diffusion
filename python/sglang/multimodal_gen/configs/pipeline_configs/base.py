@@ -608,27 +608,27 @@ class ImagePipelineConfig(PipelineConfig):
         )
         return sigmas
 
-    def shard_latents_for_sp(self, batch, latents):
-        sp_world_size, rank_in_sp_group = get_sp_world_size(), get_sp_parallel_rank()
-        seq_len = latents.shape[1]
+    # def shard_latents_for_sp(self, batch, latents):
+    #     sp_world_size, rank_in_sp_group = get_sp_world_size(), get_sp_parallel_rank()
+    #     seq_len = latents.shape[1]
 
-        # Pad to next multiple of SP degree if needed
-        if seq_len % sp_world_size != 0:
-            pad_len = sp_world_size - (seq_len % sp_world_size)
-            pad = torch.zeros(
-                (latents.shape[0], pad_len, latents.shape[2]),
-                dtype=latents.dtype,
-                device=latents.device,
-            )
-            latents = torch.cat([latents, pad], dim=1)
-            # Record padding length for later unpad
-            batch.sp_seq_pad = int(getattr(batch, "sp_seq_pad", 0)) + pad_len
+    #     # Pad to next multiple of SP degree if needed
+    #     if seq_len % sp_world_size != 0:
+    #         pad_len = sp_world_size - (seq_len % sp_world_size)
+    #         pad = torch.zeros(
+    #             (latents.shape[0], pad_len, latents.shape[2]),
+    #             dtype=latents.dtype,
+    #             device=latents.device,
+    #         )
+    #         latents = torch.cat([latents, pad], dim=1)
+    #         # Record padding length for later unpad
+    #         batch.sp_seq_pad = int(getattr(batch, "sp_seq_pad", 0)) + pad_len
 
-        sharded_tensor = rearrange(
-            latents, "b (n s) d -> b n s d", n=sp_world_size
-        ).contiguous()
-        sharded_tensor = sharded_tensor[:, rank_in_sp_group, :, :]
-        return sharded_tensor, True
+    #     sharded_tensor = rearrange(
+    #         latents, "b (n s) d -> b n s d", n=sp_world_size
+    #     ).contiguous()
+    #     sharded_tensor = sharded_tensor[:, rank_in_sp_group, :, :]
+    #     return sharded_tensor, True
 
     def gather_latents_for_sp(self, latents):
         # For image latents [B, S_local, D], gather along sequence dim=1
