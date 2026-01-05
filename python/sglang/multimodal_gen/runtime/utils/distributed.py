@@ -7,6 +7,8 @@ import numpy as np
 import torch
 import torch.distributed as dist
 
+from sglang.multimodal_gen.runtime.platforms import current_platform
+
 
 def broadcast_pyobj(
     data: List[Any],
@@ -19,13 +21,10 @@ def broadcast_pyobj(
     The `rank` here refer to the source rank on global process group (regardless
     of dist_group argument).
     """
-    from sglang.multimodal_gen.runtime.utils.common import (
-        get_device_type,
-        is_gpu_alike,
-    )
 
-    device_type = get_device_type() if is_gpu_alike() and not force_cpu_device else "cpu"
-    device = torch.device(device_type)
+    device = torch.device(
+        current_platform.device_type if not force_cpu_device else "cpu"
+    )
 
     if rank == src:
         if data is None or len(data) == 0:
@@ -36,7 +35,7 @@ def broadcast_pyobj(
             size = len(serialized_data)
 
             tensor_data = torch.ByteTensor(
-                np.frombuffer(serialized_data, dtype=np.uint8)
+                np.frombuffer(serialized_data, dtype=np.uint8).copy()
             ).to(device)
             tensor_size = torch.tensor([size], dtype=torch.long, device=device)
 

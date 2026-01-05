@@ -23,7 +23,11 @@ from sglang.multimodal_gen.runtime.distributed.device_communicators.base_device_
 from sglang.multimodal_gen.runtime.distributed.device_communicators.cpu_communicator import (
     CpuCommunicator,
 )
-from sglang.multimodal_gen.runtime.utils.logging_utils import init_logger
+from sglang.multimodal_gen.runtime.platforms import current_platform
+from sglang.multimodal_gen.runtime.utils.logging_utils import (
+    init_logger,
+    suppress_stdout,
+)
 
 try:
     import torch_musa  # noqa: F401
@@ -41,7 +45,6 @@ _group_name_counter: dict[str, int] = {}
 
 def get_local_torch_device() -> torch.device:
     """Return the torch device for the current rank."""
-    from sglang.multimodal_gen.runtime.platforms import current_platform
 
     if current_platform.is_cuda() or current_platform.is_rocm():
         return torch.device(f"cuda:{envs.LOCAL_RANK}")
@@ -172,40 +175,10 @@ class GroupCoordinator:
             device_group = torch.distributed.new_group(
                 ranks, backend=torch_distributed_backend
             )
-            # print(device_group)
-            
-            # Create a CPU group with `gloo` backend for coordination between processes
-            # For XPU devices, we need a workaround because PyTorch's new_group() may try
-            # to associate the Gloo backend with XPU device, which is not supported.
-            # The error "No backend type associated with device type xpu" occurs because
-            # Gloo backend doesn't have XPU support.
-            from sglang.multimodal_gen.runtime.platforms import current_platform
-            
-            if current_platform.is_xpu():
-                # Workaround: For XPU devices, PyTorch's new_group() may try to associate
-                # the Gloo backend with XPU device, which is not supported.
-                # The error "No backend type associated with device type xpu" occurs because
-                # Gloo backend doesn't have XPU support.
-                # We save the current device for potential future use
-                current_dev = torch.xpu.current_device()
-                
-                # PyTorch distributed may check device from global state
-                # We create the Gloo group while ensuring no XPU device context
-                try:
-                    # Create gloo group - it should only use CPU 
-                    cpu_group = torch.distributed.new_group(ranks, backend="gloo")
-                except RuntimeError as e:
-                    if "No backend type associated with device type xpu" in str(e):
-                        logger.error(
-                            "Failed to create Gloo CPU group due to XPU device association. "
-                            "This is a known PyTorch limitation. "
-                            "Workaround: Ensure torch.distributed.init_process_group was called "
-                            "without device_id parameter for XPU platforms."
-                        )
-                    raise
-            else:
+            # a group with `gloo` backend, to allow direct coordination between
+            # processes through the CPU.
+            with suppress_stdout():
                 cpu_group = torch.distributed.new_group(ranks, backend="gloo")
-            
             if self.rank in ranks:
                 self.ranks = ranks
                 self.world_size = len(ranks)
@@ -862,7 +835,8 @@ class PipelineGroupCoordinator(GroupCoordinator):
                 )
                 # a group with `gloo` backend, to allow direct coordination between
                 # processes through the CPU.
-                cpu_group = torch.distributed.new_group(ranks, backend="gloo")
+                with suppress_stdout():
+                    cpu_group = torch.distributed.new_group(ranks, backend="gloo")
                 if self.rank in ranks:
                     self.ranks = ranks
                     self.world_size = len(ranks)
@@ -885,8 +859,9 @@ class PipelineGroupCoordinator(GroupCoordinator):
                 )
                 # a group with `gloo` backend, to allow direct coordination between
                 # processes through the CPU.
-                cpu_group_0_1 = torch.distributed.new_group(ranks, backend="gloo")
-                cpu_group_1_0 = torch.distributed.new_group(ranks, backend="gloo")
+                with suppress_stdout():
+                    cpu_group_0_1 = torch.distributed.new_group(ranks, backend="gloo")
+                    cpu_group_1_0 = torch.distributed.new_group(ranks, backend="gloo")
                 if self.rank in ranks:
                     self.ranks = ranks
                     self.world_size = len(ranks)
@@ -899,7 +874,7 @@ class PipelineGroupCoordinator(GroupCoordinator):
         assert self.cpu_group is not None
         assert self.device_group is not None
 
-        self.device = envs.get_device(local_rank)
+        self.device = current_platform.get_device(local_rank)
 
         self.recv_buffer_set: bool = False
         self.recv_tasks_queue: List[Tuple[str, int]] = []
