@@ -76,12 +76,7 @@ class GPUWorker:
 
         from sglang.multimodal_gen.runtime.utils.common import set_device
 
-        logger.info(f"Worker {self.rank}: Before set_device({self.local_rank})", main_process_only=False)
         set_device(self.local_rank)
-        logger.info(
-            f"{CYAN}Worker {self.rank}: Initializing device {self.local_rank}{RESET}",
-            main_process_only=False
-        )
         # Set environment variables for distributed initialization
         os.environ["MASTER_ADDR"] = "localhost"
         os.environ["MASTER_PORT"] = str(self.master_port)
@@ -180,14 +175,15 @@ class GPUWorker:
         output_batch = None
         try:
             if self.rank == 0:
-                torch.cuda.reset_peak_memory_stats()
+                # torch.cuda.reset_peak_memory_stats()
+                torch.xpu.reset_peak_memory_stats()
 
             start_time = time.monotonic()
 
             output_batch = self.pipeline.forward(req, self.server_args)
 
             if self.rank == 0:
-                peak_memory_bytes = torch.cuda.max_memory_allocated()
+                peak_memory_bytes = torch.xpu.max_memory_allocated()
                 output_batch.peak_memory_mb = peak_memory_bytes / (1024**2)
                 peak_memory_gb = peak_memory_bytes / (1024**3)
                 remaining_gpu_mem_gb = (

@@ -171,7 +171,7 @@ class GroupCoordinator:
         self.cpu_group = None
 
         for ranks in group_ranks:
-            # print(ranks)
+            print(ranks, " ",torch_distributed_backend)
             device_group = torch.distributed.new_group(
                 ranks, backend=torch_distributed_backend
             )

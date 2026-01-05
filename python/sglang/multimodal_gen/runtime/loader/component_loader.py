@@ -122,6 +122,14 @@ class ComponentLoader(ABC):
         # not offload by default
         return False
 
+    def should_offload_native(self, server_args: ServerArgs):
+        """
+        Check if the native version of the component should be offloaded to CPU.
+        This is simpler than should_offload() as we don't need to check FSDP conditions.
+        """
+        # not offload by default
+        return False
+
     def target_device(self, should_offload):
         if should_offload:
             return (
@@ -173,7 +181,7 @@ class ComponentLoader(ABC):
             component = self.load_native(
                 component_model_path, server_args, transformers_or_diffusers
             )
-            should_offload = self.should_offload(server_args)
+            should_offload = self.should_offload_native(server_args)
             target_device = self.target_device(should_offload)
             component = component.to(device=target_device)
             source = "native"
@@ -319,6 +327,13 @@ class TextEncoderLoader(ComponentLoader):
         )
         use_cpu_offload = should_offload and len(fsdp_shard_conditions) > 0
         return use_cpu_offload
+
+    def should_offload_native(self, server_args: ServerArgs):
+        """
+        Check if the native version of the text encoder should be offloaded to CPU.
+        For native version, we simply check the text_encoder_cpu_offload flag.
+        """
+        return server_args.text_encoder_cpu_offload or False
 
     def _prepare_weights(
         self,
@@ -536,6 +551,13 @@ class ImageEncoderLoader(TextEncoderLoader):
         use_cpu_offload = should_offload and len(fsdp_shard_conditions) > 0
         return use_cpu_offload
 
+    def should_offload_native(self, server_args: ServerArgs):
+        """
+        Check if the native version of the image encoder should be offloaded to CPU.
+        For native version, we simply check the image_encoder_cpu_offload flag.
+        """
+        return server_args.image_encoder_cpu_offload or False
+
     def load_customized(
         self, component_model_path: str, server_args: ServerArgs, *args
     ):
@@ -602,6 +624,12 @@ class VAELoader(ComponentLoader):
         self, server_args: ServerArgs, model_config: ModelConfig | None = None
     ):
         return server_args.vae_cpu_offload
+
+    def should_offload_native(self, server_args: ServerArgs):
+        """
+        Check if the native version of the VAE should be offloaded to CPU.
+        """
+        return server_args.vae_cpu_offload or False
 
     def load_customized(
         self, component_model_path: str, server_args: ServerArgs, *args

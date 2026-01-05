@@ -4,6 +4,10 @@ Intel XPU Platform support for SGLang Diffusion.
 This file provides platform abstraction for Intel XPU (GPU) devices.
 """
 
+import os
+from functools import lru_cache
+from typing import Any
+
 import torch
 
 from sglang.multimodal_gen.runtime.platforms.interface import (
@@ -17,6 +21,22 @@ from sglang.multimodal_gen.runtime.utils.logging_utils import init_logger
 logger = init_logger(__name__)
 
 
+def device_id_to_physical_device_id(device_id: int) -> int:
+    """Convert logical device ID to physical device ID based on ZE_AFFINITY_MASK."""
+    if "ZE_AFFINITY_MASK" in os.environ:
+        device_ids = os.environ["ZE_AFFINITY_MASK"].split(",")
+        if device_ids == [""]:
+            msg = (
+                "ZE_AFFINITY_MASK is set to empty string, which means"
+                " XPU support is disabled."
+            )
+            raise RuntimeError(msg)
+        physical_device_id = device_ids[device_id]
+        return int(physical_device_id)
+    else:
+        return device_id
+
+
 class XpuPlatform(Platform):
     _enum = PlatformEnum.XPU
     device_name: str = "xpu"
@@ -25,6 +45,7 @@ class XpuPlatform(Platform):
     device_control_env_var: str = "ZE_AFFINITY_MASK"  # Intel GPU environment variable
 
     @classmethod
+    @lru_cache(maxsize=8)
     def get_device_capability(cls, device_id: int = 0) -> DeviceCapability | None:
         """
         XPU doesn't have a direct equivalent to CUDA compute capability.
@@ -38,6 +59,20 @@ class XpuPlatform(Platform):
             return None
 
     @classmethod
+    @lru_cache(maxsize=8)
+    def has_device_capability(
+        cls,
+        capability: tuple[int, int] | int,
+        device_id: int = 0,
+    ) -> bool:
+        """Check if the device has the specified capability."""
+        try:
+            return bool(super().has_device_capability(capability, device_id))
+        except RuntimeError:
+            return False
+
+    @classmethod
+    @lru_cache(maxsize=8)
     def get_device_name(cls, device_id: int = 0) -> str:
         """Get the name of the XPU device."""
         try:
@@ -47,6 +82,7 @@ class XpuPlatform(Platform):
             return "Unknown XPU Device"
 
     @classmethod
+    @lru_cache(maxsize=8)
     def get_device_uuid(cls, device_id: int = 0) -> str:
         """Get the UUID of the XPU device."""
         # XPU doesn't provide UUID through PyTorch API yet
@@ -54,6 +90,7 @@ class XpuPlatform(Platform):
         return f"XPU-{device_id}"
 
     @classmethod
+    @lru_cache(maxsize=8)
     def get_device_total_memory(cls, device_id: int = 0) -> int:
         """Get the total memory of the XPU device in bytes."""
         try:
@@ -92,6 +129,61 @@ class XpuPlatform(Platform):
             return 0.0
 
     @classmethod
+    def get_available_gpu_memory(
+        cls,
+        device_id: int = 0,
+        distributed: bool = False,
+        empty_cache: bool = True,
+        cpu_group: Any = None,
+    ) -> float:
+        """
+        Get available GPU memory on XPU device.
+        
+        Returns:
+            float: Available memory in GiB.
+        """
+        if empty_cache:
+            torch.xpu.empty_cache()
+
+        try:
+            # Get free and total memory
+            free_gpu_memory, total_memory = torch.xpu.mem_get_info(device_id)
+        except Exception as e:
+            logger.warning(f"Failed to get XPU memory info: {e}")
+            # Fallback: estimate based on total memory and current usage
+            try:
+                total_memory = cls.get_device_total_memory(device_id)
+                used_memory = torch.xpu.memory_allocated(device_id)
+                free_gpu_memory = total_memory - used_memory
+            except Exception:
+                return 0.0
+
+        if distributed:
+            import torch.distributed as dist
+
+            tensor = torch.tensor(free_gpu_memory, dtype=torch.float32, device="xpu")
+            dist.all_reduce(tensor, op=dist.ReduceOp.MIN, group=cpu_group)
+            free_gpu_memory = float(tensor.item())
+
+        return free_gpu_memory / (1 << 30)
+
+    @classmethod
+    def seed_everything(cls, seed: int | None = None) -> None:
+        """
+        Set the seed of each random module for XPU.
+        """
+        import random
+
+        import numpy as np
+
+        if seed is not None:
+            random.seed(seed)
+            np.random.seed(seed)
+            torch.manual_seed(seed)
+            if hasattr(torch.xpu, "manual_seed_all"):
+                torch.xpu.manual_seed_all(seed)
+
+    @classmethod
     def get_attn_backend_cls_str(
         cls,
         selected_backend: AttentionBackendEnum | None,
@@ -111,9 +203,10 @@ class XpuPlatform(Platform):
         # XPU-specific backends that are not supported
         unsupported_backends = [
             AttentionBackendEnum.FA,
+            AttentionBackendEnum.FA2,
             AttentionBackendEnum.SLIDING_TILE_ATTN,
             AttentionBackendEnum.SAGE_ATTN,
-            AttentionBackendEnum.SAGE_ATTN_THREE,
+            AttentionBackendEnum.SAGE_ATTN_3,
             AttentionBackendEnum.VIDEO_SPARSE_ATTN,
             AttentionBackendEnum.VMOBA_ATTN,
         ]

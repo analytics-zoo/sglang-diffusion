@@ -18,6 +18,28 @@ import zmq
 logger = logging.getLogger(__name__)
 
 
+# Device detection helper functions
+# https://pytorch.org/docs/stable/notes/hip.html#checking-for-hip
+@lru_cache(maxsize=1)
+def is_hip() -> bool:
+    return torch.version.hip is not None
+
+
+@lru_cache(maxsize=1)
+def is_cuda() -> bool:
+    return torch.cuda.is_available() and torch.version.cuda is not None
+
+
+@lru_cache(maxsize=1)
+def is_cuda_alike() -> bool:
+    return is_cuda() or is_hip()
+
+
+@lru_cache(maxsize=1)
+def is_xpu() -> bool:
+    return hasattr(torch, "xpu") and torch.xpu.is_available()
+
+
 def kill_process_tree(parent_pid, include_parent: bool = True, skip_pid: int = None):
     """Kill the process and all its child processes."""
     # Remove sigchld handler to avoid spammy logs.

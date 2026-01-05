@@ -54,8 +54,6 @@ class CausalDMDDenoisingStage(DenoisingStage):
         batch: Req,
         server_args: ServerArgs,
     ) -> Req:
-        from sglang.multimodal_gen.runtime.utils.common import get_device_type, is_gpu_alike
-        device_type_str = get_device_type() if is_gpu_alike() else "cpu"
         
         target_dtype = torch.bfloat16
         autocast_enabled = (

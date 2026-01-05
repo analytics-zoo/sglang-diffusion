@@ -330,7 +330,6 @@ class ComposedPipelineBase(ABC):
         batch.log(server_args=server_args)
 
         # Execute each stage
-        print(f"[DEBUG] Rank {rank}: About to call executor.execute()", flush=True)
         logger.info(
             "Running pipeline stages: %s",
             list(self._stage_name_mapping.keys()),
