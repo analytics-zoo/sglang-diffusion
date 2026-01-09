@@ -106,7 +106,9 @@ class SGLDiffusionProfiler:
             return
         self.has_stopped = True
         logger.info("Stopping Profiler...")
-        if torch.cuda.is_available():
+        if hasattr(torch, 'xpu') and torch.xpu.is_available():
+            torch.xpu.synchronize()
+        elif torch.cuda.is_available():
             torch.cuda.synchronize()
         self.profiler.stop()
 

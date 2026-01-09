@@ -74,22 +74,32 @@ def find_nccl_library() -> str:
     return str(so_file)
 
 
-prev_set_stream = torch.cuda.set_stream
+# Platform-aware stream management
+# Check if XPU is available and set up appropriate stream patching
+_is_xpu_available = hasattr(torch, "xpu") and torch.xpu.is_available()
+
+if _is_xpu_available:
+    prev_set_stream = torch.xpu.set_stream
+else:
+    prev_set_stream = torch.cuda.set_stream
 
 _current_stream = None
 
 
-def _patched_set_stream(stream: torch.cuda.Stream | None) -> None:
+def _patched_set_stream(stream) -> None:
     global _current_stream
     _current_stream = stream
     if stream is not None:
         prev_set_stream(stream)
 
 
-torch.cuda.set_stream = _patched_set_stream
+if _is_xpu_available:
+    torch.xpu.set_stream = _patched_set_stream
+else:
+    torch.cuda.set_stream = _patched_set_stream
 
 
-def current_stream() -> torch.cuda.Stream | None:
+def current_stream():
     """
     replace `torch.cuda.current_stream()` with `sglang.multimodal_gen.utils.current_stream()`.
     it turns out that `torch.cuda.current_stream()` is quite expensive,
@@ -102,7 +112,7 @@ def current_stream() -> torch.cuda.Stream | None:
     """
     from sglang.multimodal_gen.runtime.platforms import current_platform
 
-    # For non-CUDA platforms, return None
+    # For non-CUDA-alike platforms, return None
     if not current_platform.is_cuda_alike():
         return None
 
@@ -110,14 +120,15 @@ def current_stream() -> torch.cuda.Stream | None:
     if _current_stream is None:
         # when this function is called before any stream is set,
         # we return the default stream.
-        # On ROCm using the default 0 stream in combination with RCCL
-        # is hurting performance. Therefore creating a dedicated stream
-        # per process
-        _current_stream = (
-            torch.cuda.Stream()
-            if current_platform.is_rocm()
-            else torch.cuda.current_stream()
-        )
+        if current_platform.is_xpu():
+            _current_stream = torch.xpu.Stream()
+        elif current_platform.is_rocm():
+            # On ROCm using the default 0 stream in combination with RCCL
+            # is hurting performance. Therefore creating a dedicated stream
+            # per process
+            _current_stream = torch.cuda.Stream()
+        else:
+            _current_stream = torch.cuda.current_stream()
     return _current_stream
 
 

@@ -39,11 +39,18 @@ class LayerwiseOffloadManager:
         self.num_layers = num_layers
         self.pin_cpu_memory = pin_cpu_memory
 
-        self.enabled = bool(enabled and torch.cuda.is_available())
+        # Check for available device (XPU or CUDA)
+        self._is_xpu = hasattr(torch, 'xpu') and torch.xpu.is_available()
+        self._is_cuda = torch.cuda.is_available()
+        self.enabled = bool(enabled and (self._is_xpu or self._is_cuda))
         if not self.enabled:
             return
-        self.device = torch.device("cuda", torch.cuda.current_device())
-        self.copy_stream = torch.cuda.Stream()
+        if self._is_xpu:
+            self.device = torch.device("xpu", torch.xpu.current_device())
+            self.copy_stream = torch.xpu.Stream()
+        else:
+            self.device = torch.device("cuda", torch.cuda.current_device())
+            self.copy_stream = torch.cuda.Stream()
 
         self._layer_name_re = re.compile(
             rf"(^|\.){re.escape(layers_attr_str)}\.(\d+)(\.|$)"
@@ -133,7 +140,10 @@ class LayerwiseOffloadManager:
     def prepare_for_next_denoise(self, non_blocking=True):
         self.prefetch_layer(0, non_blocking=non_blocking)
         if not non_blocking and self.copy_stream is not None:
-            torch.cuda.current_stream().wait_stream(self.copy_stream)
+            if self._is_xpu:
+                torch.xpu.current_stream().wait_stream(self.copy_stream)
+            else:
+                torch.cuda.current_stream().wait_stream(self.copy_stream)
 
     def get_target_with_name(self, name: str) -> torch.Tensor:
         """get the target model weight/buffer to be replaced"""
@@ -153,11 +163,18 @@ class LayerwiseOffloadManager:
             return
         if layer_idx not in self._consolidated_cpu_weights:
             return
-        self.copy_stream.wait_stream(torch.cuda.current_stream())
+        if self._is_xpu:
+            self.copy_stream.wait_stream(torch.xpu.current_stream())
+        else:
+            self.copy_stream.wait_stream(torch.cuda.current_stream())
 
         # create gpu buffer and load from CPU buffer
         gpu_buffers: Dict[torch.dtype, torch.Tensor] = {}
-        with torch.cuda.stream(self.copy_stream):
+        if self._is_xpu:
+            stream_context = torch.xpu.stream(self.copy_stream)
+        else:
+            stream_context = torch.cuda.stream(self.copy_stream)
+        with stream_context:
             for dtype, cpu_buffer in self._consolidated_cpu_weights[layer_idx].items():
                 gpu_buffer = torch.empty(
                     cpu_buffer.shape, dtype=dtype, device=self.device

@@ -42,6 +42,7 @@ class AttentionBackendEnum(enum.Enum):
 class PlatformEnum(enum.Enum):
     CUDA = enum.auto()
     ROCM = enum.auto()
+    XPU = enum.auto()  # Intel XPU (GPU) support
     TPU = enum.auto()
     CPU = enum.auto()
     MPS = enum.auto()
@@ -147,7 +148,7 @@ class Platform:
     @lru_cache(maxsize=1)
     def is_cuda_alike(self) -> bool:
         """Stateless version of :func:`torch.cuda.is_available`."""
-        return self._enum in (PlatformEnum.CUDA, PlatformEnum.ROCM)
+        return self._enum in (PlatformEnum.CUDA, PlatformEnum.ROCM, PlatformEnum.XPU)
 
     @lru_cache(maxsize=1)
     def is_mps(self) -> bool:
@@ -225,6 +226,8 @@ class Platform:
     def get_device(self, local_rank: int) -> torch.device:
         if self.is_cuda() or self.is_rocm():
             return torch.device("cuda", local_rank)
+        elif self.is_xpu():
+            return torch.device("xpu", local_rank)
         elif self.is_musa():
             return torch.device("musa", local_rank)
         elif self.is_mps():
@@ -234,7 +237,9 @@ class Platform:
 
     @lru_cache(maxsize=1)
     def get_torch_distributed_backend_str(self) -> str:
-        if self.is_cuda_alike():
+        if self.is_xpu():
+            return "xccl"
+        elif self.is_cuda_alike():
             return "nccl"
         elif self.is_musa():
             return "mccl"

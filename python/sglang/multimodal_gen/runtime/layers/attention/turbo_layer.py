@@ -14,6 +14,14 @@ from torch.distributed import ProcessGroup
 from torch.nn import Module
 
 
+def _get_device_stream_context():
+    """Get the appropriate stream context for XPU or CUDA."""
+    if hasattr(torch, 'xpu') and torch.xpu.is_available():
+        return torch.xpu.Stream(), torch.xpu.stream, torch.xpu.current_stream
+    else:
+        return torch.cuda.Stream(), torch.cuda.stream, torch.cuda.current_stream
+
+
 def post_all2all(local_seq_2_local_head, seq_world_size):
     def post_func(input):
         # b, s, n, h
@@ -64,13 +72,18 @@ def async_a2a_communicate(
     a2a_inputs: Union[torch.Tensor, List[torch.Tensor]],
     cp_size: int,
     cp_group: ProcessGroup,
-    cp_stream: torch.cuda.Stream,
+    cp_stream,  # torch.cuda.Stream or torch.xpu.Stream
     local_seq_2_local_head: bool,
 ) -> Union[torch.Tensor, List[torch.Tensor]]:
     """
     A2A communication for context parallelism. best used in communicate qkv
     Modified from Nvidia Transformer Engine.
     """
+    # Determine stream context based on device type
+    is_xpu = hasattr(torch, 'xpu') and torch.xpu.is_available()
+    stream_context = torch.xpu.stream if is_xpu else torch.cuda.stream
+    current_stream_fn = torch.xpu.current_stream if is_xpu else torch.cuda.current_stream
+    
     a2a_inputs = [a2a_inputs] if not isinstance(a2a_inputs, list) else a2a_inputs
     a2a_outputs, a2a_reqs = [None] * len(a2a_inputs), [None] * len(a2a_inputs)
     a2a_post_fns = [None] * len(a2a_inputs)
@@ -83,7 +96,7 @@ def async_a2a_communicate(
                 )
                 a2a_post_fns[i - 1] = post_all2all(local_seq_2_local_head, cp_size)
             if i > 1:
-                with torch.cuda.stream(cp_stream):
+                with stream_context(cp_stream):
                     a2a_reqs[i - 2].wait()
                     a2a_outputs[i - 2] = a2a_post_fns[i - 2](a2a_outputs[i - 2])
             if i < len(a2a_inputs):
@@ -103,10 +116,10 @@ def async_a2a_communicate(
                     a2a_inputs[i], "bs (w s) h d -> w bs s h d", w=cp_size
                 ).contiguous()
             if i > 1:
-                with torch.cuda.stream(cp_stream):
+                with stream_context(cp_stream):
                     a2a_reqs[i - 2].wait()
                     a2a_outputs[i - 2] = a2a_post_fns[i - 2](a2a_outputs[i - 2])
-    torch.cuda.current_stream().wait_stream(cp_stream)
+    current_stream_fn().wait_stream(cp_stream)
     return a2a_outputs[0] if len(a2a_inputs) == 1 else a2a_outputs
 
 
@@ -260,7 +273,7 @@ class _SeqAllToAllQKV(torch.autograd.Function):
         k: Tensor,
         v: Tensor,
         cp_size: int,
-        cp_stream: torch.cuda.Stream,
+        cp_stream,  # torch.cuda.Stream or torch.xpu.Stream
         local_seq_2_local_head: bool,
     ) -> Tuple[Tensor, Tensor, Tensor]:
         ctx.group = group

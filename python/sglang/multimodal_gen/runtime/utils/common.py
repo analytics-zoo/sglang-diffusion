@@ -243,6 +243,26 @@ def get_zmq_socket(
 
 
 @lru_cache(maxsize=1)
+def is_hip() -> bool:
+    return torch.version.hip is not None
+
+
+@lru_cache(maxsize=1)
+def is_cuda() -> bool:
+    return torch.cuda.is_available() and torch.version.cuda is not None
+
+
+@lru_cache(maxsize=1)
+def is_cuda_alike() -> bool:
+    return is_cuda() or is_hip() or is_xpu()
+
+
+@lru_cache(maxsize=1)
+def is_xpu() -> bool:
+    return hasattr(torch, "xpu") and torch.xpu.is_available()
+
+
+@lru_cache(maxsize=1)
 def is_host_cpu_x86() -> bool:
     machine = platform.machine().lower()
     return (
@@ -256,9 +276,113 @@ def is_host_cpu_x86() -> bool:
 
 
 def set_cuda_arch():
-    capability = torch.cuda.get_device_capability()
-    arch = f"{capability[0]}.{capability[1]}"
-    os.environ["TORCH_CUDA_ARCH_LIST"] = f"{arch}{'+PTX' if arch == '9.0' else ''}"
+    """Set CUDA architecture for the current device. Kept for backward compatibility."""
+    set_device_arch()
+
+
+def set_device_arch():
+    """Set device-specific architecture environment variables."""
+    if is_cuda():
+        capability = torch.cuda.get_device_capability()
+        arch = f"{capability[0]}.{capability[1]}"
+        os.environ["TORCH_CUDA_ARCH_LIST"] = f"{arch}{'+PTX' if arch == '9.0' else ''}"
+    elif is_xpu():
+        # XPU doesn't have compute capability like CUDA
+        # Set a generic marker if needed
+        os.environ["TORCH_XPU_ARCH"] = "xpu"
+    # For other devices, no action needed
+
+
+# Device abstraction utilities
+
+
+def get_device_type() -> str:
+    """
+    Get the current device type as a string.
+    
+    Returns:
+        str: 'cuda', 'xpu', 'cpu', etc.
+    """
+    if is_cuda():
+        return "cuda"
+    elif is_xpu():
+        return "xpu"
+    elif is_hip():
+        return "cuda"  # ROCm uses 'cuda' backend string in PyTorch
+    else:
+        return "cpu"
+
+
+def get_device_module():
+    """
+    Get the appropriate torch device module (torch.cuda, torch.xpu, etc.).
+    
+    Returns:
+        The torch device module for the current platform.
+    """
+    device_type = get_device_type()
+    if device_type == "cuda":
+        return torch.cuda
+    elif device_type == "xpu":
+        return torch.xpu
+    else:
+        raise RuntimeError(f"Unsupported device type: {device_type}")
+
+
+def device_synchronize(device: torch.device | None = None):
+    """
+    Synchronize the device (equivalent to torch.cuda.synchronize for any device).
+    
+    Args:
+        device: The device to synchronize. If None, synchronizes the current device.
+    """
+    if is_cuda() or is_hip():
+        torch.cuda.synchronize(device)
+    elif is_xpu():
+        torch.xpu.synchronize(device)
+
+
+def set_device(device_id: int):
+    """
+    Set the current device (equivalent to torch.cuda.set_device for any device).
+    
+    Args:
+        device_id: The device ID to set as current.
+    """
+    if is_cuda() or is_hip():
+        torch.cuda.set_device(device_id)
+    elif is_xpu():
+        torch.xpu.set_device(device_id)
+
+
+def reset_peak_memory_stats(device: torch.device | None = None):
+    """
+    Reset peak memory statistics for the device.
+    
+    Args:
+        device: The device for which to reset stats. If None, uses current device.
+    """
+    if is_cuda() or is_hip():
+        torch.cuda.reset_peak_memory_stats(device)
+    elif is_xpu():
+        torch.xpu.reset_peak_memory_stats(device)
+
+
+def max_memory_allocated(device: torch.device | None = None) -> int:
+    """
+    Get the maximum memory allocated on the device.
+    
+    Args:
+        device: The device to query. If None, uses current device.
+        
+    Returns:
+        int: Maximum memory allocated in bytes.
+    """
+    if is_cuda() or is_hip():
+        return torch.cuda.max_memory_allocated(device)
+    elif is_xpu():
+        return torch.xpu.max_memory_allocated(device)
+    return 0
 
 
 # env var managements

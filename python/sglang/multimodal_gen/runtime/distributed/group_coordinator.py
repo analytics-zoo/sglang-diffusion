@@ -46,11 +46,14 @@ _group_name_counter: dict[str, int] = {}
 def get_local_torch_device() -> torch.device:
     """Return the torch device for the current rank."""
 
-    return (
-        torch.device(f"cuda:{envs.LOCAL_RANK}")
-        if current_platform.is_cuda_alike()
-        else torch.device("mps")
-    )
+    if current_platform.is_cuda() or current_platform.is_rocm():
+        return torch.device(f"cuda:{envs.LOCAL_RANK}")
+    elif current_platform.is_xpu():
+        return torch.device(f"xpu:{envs.LOCAL_RANK}")
+    elif current_platform.is_mps():
+        return torch.device("mps")
+    else:
+        return torch.device("cpu")
 
 
 def _get_unique_name(name: str) -> str:
@@ -290,7 +293,7 @@ class GroupCoordinator:
         # Platform-aware graph capture
         from sglang.multimodal_gen.runtime.platforms import current_platform
 
-        if current_platform.is_cuda_alike():
+        if current_platform.is_cuda() or current_platform.is_rocm():
             if graph_capture_context is None:
                 stream = torch.cuda.Stream()
                 graph_capture_context = GraphCaptureContext(stream)
@@ -304,6 +307,22 @@ class GroupCoordinator:
                 stream.wait_stream(curr_stream)
 
             with torch.cuda.stream(stream):
+                yield graph_capture_context
+        elif current_platform.is_xpu():
+            # XPU stream management
+            if graph_capture_context is None:
+                stream = torch.xpu.Stream()
+                graph_capture_context = GraphCaptureContext(stream)
+            else:
+                stream = graph_capture_context.stream
+
+            # ensure all initialization operations complete before attempting to
+            # capture the graph on another stream
+            curr_stream = torch.xpu.current_stream()
+            if curr_stream != stream:
+                stream.wait_stream(curr_stream)
+
+            with torch.xpu.stream(stream):
                 yield graph_capture_context
         else:
             # For non-CUDA platforms (MPS, CPU), just yield the context without stream management

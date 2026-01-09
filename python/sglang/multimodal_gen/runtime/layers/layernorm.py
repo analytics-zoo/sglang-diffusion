@@ -126,6 +126,32 @@ class RMSNorm(CustomOp):
     ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         return self.forward_native(x, residual)
 
+    def forward_xpu(
+        self,
+        x: torch.Tensor,
+        residual: Optional[torch.Tensor] = None,
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        """XPU-specific implementation of RMSNorm.
+        
+        Uses sgl_kernel if available, otherwise falls back to native implementation.
+        """
+        shape = x.shape
+        x = x.view(-1, shape[-1])
+        if x.dtype == torch.float or self.variance_size_override is not None:
+            return self.forward_native(x.view(shape), residual)
+        if residual is not None:
+            try:
+                fused_add_rmsnorm(x, residual.view(-1, shape[-1]), self.weight.data, self.variance_epsilon)
+                return x.view(shape), residual
+            except Exception:
+                return self.forward_native(x.view(shape), residual)
+        try:
+            out = rmsnorm(x, self.weight.data, self.variance_epsilon)
+            out = out.view(shape)
+            return out
+        except Exception:
+            return self.forward_native(x.view(shape), residual)
+
     def forward_hip(
         self,
         x: torch.Tensor,

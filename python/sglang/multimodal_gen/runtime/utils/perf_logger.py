@@ -153,9 +153,11 @@ class StageProfiler:
             if (
                 os.environ.get("SGLANG_DIFFUSION_SYNC_STAGE_PROFILING", "0") == "1"
                 and self.stage_name.startswith("denoising_step_")
-                and torch.cuda.is_available()
             ):
-                torch.cuda.synchronize()
+                if hasattr(torch, 'xpu') and torch.xpu.is_available():
+                    torch.xpu.synchronize()
+                elif torch.cuda.is_available():
+                    torch.cuda.synchronize()
             self.start_time = time.perf_counter()
 
         return self
@@ -167,9 +169,11 @@ class StageProfiler:
         if (
             os.environ.get("SGLANG_DIFFUSION_SYNC_STAGE_PROFILING", "0") == "1"
             and self.stage_name.startswith("denoising_step_")
-            and torch.cuda.is_available()
         ):
-            torch.cuda.synchronize()
+            if hasattr(torch, 'xpu') and torch.xpu.is_available():
+                torch.xpu.synchronize()
+            elif torch.cuda.is_available():
+                torch.cuda.synchronize()
         execution_time_s = time.perf_counter() - self.start_time
 
         if exc_type:

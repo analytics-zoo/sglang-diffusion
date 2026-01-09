@@ -223,10 +223,15 @@ def init_distributed_environment(
     # Determine the appropriate backend based on the platform
     from sglang.multimodal_gen.runtime.platforms import current_platform
 
-    if backend == "nccl" and not current_platform.is_cuda_alike():
-        # Use gloo backend for non-CUDA platforms (MPS, CPU)
-        backend = "gloo"
-        logger.info("Using gloo backend for %s platform", current_platform.device_name)
+    if backend == "nccl":
+        if current_platform.is_xpu():
+            # Use XCCL backend for Intel XPU
+            backend = "xccl"
+            logger.info("Using XCCL backend for Intel XPU platform")
+        elif not current_platform.is_cuda_alike():
+            # Use gloo backend for non-CUDA platforms (MPS, CPU)
+            backend = "gloo"
+            logger.info("Using gloo backend for %s platform", current_platform.device_name)
 
     logger.debug(
         "world_size=%d rank=%d local_rank=%d " "distributed_init_method=%s backend=%s",
@@ -243,7 +248,20 @@ def init_distributed_environment(
         )
 
         # For MPS, don't pass device_id as it doesn't support device indices
-        extra_args = {} if current_platform.is_mps() else dict(device_id=device_id)
+        # For Gloo backend (CPU-only), don't pass device_id to avoid device association errors
+        # For XPU with XCCL backend, don't pass device_id to avoid issues when creating
+        # subsequent Gloo CPU groups (PyTorch will check the global process group's device)
+        extra_args = {}
+        if (not current_platform.is_mps() 
+            and backend not in ["gloo", "xccl"]
+            and not current_platform.is_xpu()):
+            # Only pass device_id for CUDA/ROCm with NCCL backend
+            extra_args = dict(device_id=device_id)
+
+        # Set XPU device before init
+        if current_platform.is_xpu():
+            torch.xpu.set_device(local_rank)
+
         torch.distributed.init_process_group(
             backend=backend,
             init_method=distributed_init_method,
@@ -612,10 +630,14 @@ def maybe_init_distributed_environment_and_model_parallel(
         sequence_parallel_degree=sp_size,
     )
 
-    # Only set CUDA device if we're on a CUDA platform
+    # Only set device if we're on a CUDA-alike platform
     if current_platform.is_cuda_alike():
-        device = torch.device(f"cuda:{local_rank}")
-        torch.cuda.set_device(device)
+        if hasattr(torch, 'xpu') and torch.xpu.is_available():
+            device = torch.device(f"xpu:{local_rank}")
+            torch.xpu.set_device(device)
+        else:
+            device = torch.device(f"cuda:{local_rank}")
+            torch.cuda.set_device(device)
 
 
 def model_parallel_is_initialized() -> bool:

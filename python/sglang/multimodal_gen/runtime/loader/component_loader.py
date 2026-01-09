@@ -217,11 +217,13 @@ class ComponentLoader(ABC):
                 trust_remote_code=server_args.trust_remote_code,
                 revision=server_args.revision,
             )
+            # Load model to CPU first to avoid CUDA initialization issues on XPU
             return AutoModel.from_pretrained(
                 component_model_path,
                 config=config,
                 trust_remote_code=server_args.trust_remote_code,
                 revision=server_args.revision,
+                device_map="cpu",  # Load to CPU first, then move to target device
             )
         elif transformers_or_diffusers == "diffusers":
             from diffusers import AutoModel
@@ -310,6 +312,9 @@ class TextEncoderLoader(ComponentLoader):
         should_offload = server_args.text_encoder_cpu_offload
         if not should_offload:
             return False
+        # For native models (no model_config), respect user's offload setting directly
+        if model_config is None:
+            return should_offload
         # _fsdp_shard_conditions is in arch_config, not directly on model_config
         arch_config = (
             getattr(model_config, "arch_config", model_config) if model_config else None
@@ -522,6 +527,9 @@ class ImageEncoderLoader(TextEncoderLoader):
         should_offload = server_args.image_encoder_cpu_offload
         if not should_offload:
             return False
+        # For native models (no model_config), respect user's offload setting directly
+        if model_config is None:
+            return should_offload
         # _fsdp_shard_conditions is in arch_config, not directly on model_config
         arch_config = (
             getattr(model_config, "arch_config", model_config) if model_config else None

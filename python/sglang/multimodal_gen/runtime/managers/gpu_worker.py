@@ -70,7 +70,11 @@ class GPUWorker:
     def init_device_and_model(self) -> None:
         """Initialize the device and load the model."""
         setproctitle(f"sgl_diffusion::scheduler_TP{self.local_rank}")
-        torch.cuda.set_device(self.local_rank)
+        # Set device based on available platform
+        if hasattr(torch, 'xpu') and torch.xpu.is_available():
+            torch.xpu.set_device(self.local_rank)
+        elif torch.cuda.is_available():
+            torch.cuda.set_device(self.local_rank)
         # Set environment variables for distributed initialization
         os.environ["MASTER_ADDR"] = "localhost"
         os.environ["MASTER_PORT"] = str(self.master_port)
@@ -120,7 +124,11 @@ class GPUWorker:
         output_batch = None
         try:
             if self.rank == 0:
-                torch.cuda.reset_peak_memory_stats()
+                # Reset peak memory stats based on device type
+                if hasattr(torch, 'xpu') and torch.xpu.is_available():
+                    torch.xpu.reset_peak_memory_stats()
+                elif torch.cuda.is_available():
+                    torch.cuda.reset_peak_memory_stats()
 
             start_time = time.monotonic()
 
@@ -138,7 +146,13 @@ class GPUWorker:
                 output_batch = result
 
             if self.rank == 0:
-                peak_memory_bytes = torch.cuda.max_memory_allocated()
+                # Get peak memory based on device type
+                if hasattr(torch, 'xpu') and torch.xpu.is_available():
+                    peak_memory_bytes = torch.xpu.max_memory_allocated()
+                elif torch.cuda.is_available():
+                    peak_memory_bytes = torch.cuda.max_memory_allocated()
+                else:
+                    peak_memory_bytes = 0
                 output_batch.peak_memory_mb = peak_memory_bytes / (1024**2)
                 peak_memory_gb = peak_memory_bytes / (1024**3)
                 remaining_gpu_mem_gb = (

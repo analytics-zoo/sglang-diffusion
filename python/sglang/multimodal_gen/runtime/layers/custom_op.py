@@ -42,6 +42,14 @@ class CustomOp(nn.Module):
         # ROCm kernels follow the CUDA path by default.
         return self.forward_cuda(*args, **kwargs)
 
+    def forward_xpu(self, *args, **kwargs) -> Any:
+        # By default, assume XPU ops are compatible with CUDA ops
+        return self.forward_cuda(*args, **kwargs)
+
+    def forward_npu(self, *args, **kwargs) -> Any:
+        # By default, assume NPU ops are compatible with CUDA ops
+        return self.forward_cuda(*args, **kwargs)
+
     def forward_cpu(self, *args, **kwargs) -> Any:
         # By default, we assume that CPU ops are compatible with CUDA ops.
         return self.forward_cuda(*args, **kwargs)
