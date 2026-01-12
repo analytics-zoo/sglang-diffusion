@@ -230,18 +230,50 @@ class CLIPAttention(nn.Module):
             key_states = key_states.transpose(1, 2)
             value_states = value_states.transpose(1, 2)
 
-            if current_platform.is_rocm():
-                # ROCm: Using both is_causal=True and attn_mask causes NaN.
-                # Use is_causal=True alone (padding mask not needed for CLIP
-                # since pooler_output comes from EOS token before padding).
-                attn_output = torch.nn.functional.scaled_dot_product_attention(
-                    query_states,
-                    key_states,
-                    value_states,
-                    attn_mask=None,
-                    is_causal=True,
-                    scale=self.scale,
-                )
+            if current_platform.is_xpu():
+                # XPU: Using both is_causal=True and attn_mask causes error:
+                # "attn_bias cannot present with is_causal"
+                if attention_mask is not None:
+                    # When attention_mask is provided, we need to combine it with causal mask
+                    # and use is_causal=False to avoid the conflict
+                    seq_len = query_states.shape[2]
+                    # Create causal mask: [1, 1, S, S]
+                    causal_mask = torch.triu(
+                        torch.ones(seq_len, seq_len, dtype=torch.bool, device=query_states.device),
+                        diagonal=1
+                    )
+                    causal_mask = causal_mask[None, None, :, :].expand(
+                        query_states.shape[0], 1, -1, -1
+                    )
+                    # Convert attention_mask to [B, 1, 1, S] format
+                    if attention_mask.dim() == 2:
+                        attn_mask = attention_mask[:, None, None, :].to(
+                            dtype=query_states.dtype
+                        )
+                        attn_mask = (1.0 - attn_mask) * torch.finfo(
+                            query_states.dtype
+                        ).min
+                    else:
+                        attn_mask = attention_mask
+                    # Combine causal mask with attention mask
+                    attn_mask = attn_mask.masked_fill(causal_mask, torch.finfo(query_states.dtype).min)
+                    attn_output = torch.nn.functional.scaled_dot_product_attention(
+                        query_states,
+                        key_states,
+                        value_states,
+                        attn_mask=attn_mask,
+                        is_causal=False,
+                        scale=self.scale,
+                    )
+                else:
+                    attn_output = torch.nn.functional.scaled_dot_product_attention(
+                        query_states,
+                        key_states,
+                        value_states,
+                        attn_mask=None,
+                        is_causal=True,
+                        scale=self.scale,
+                    )
             else:
                 if attention_mask is not None:
                     # SDPA requires [B, 1, 1, S] or [B, S, S] format mask
