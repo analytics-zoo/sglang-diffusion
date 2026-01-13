@@ -4,10 +4,17 @@ Intel XPU Communicator for SGLang Diffusion.
 
 This module provides distributed communication support for Intel XPU devices
 using PyTorch's built-in distributed communication primitives with XCCL backend.
+
+IMPORTANT: This module uses torch.distributed._functional_collectives.all_to_all_single
+instead of torch.distributed.all_to_all_single for the all_to_all_4D operation.
+This is because torch.distributed.all_to_all_single has a known bug on Intel XPU
+with XCCL backend that causes data corruption. See XCCL_AllToAll_Bug_Report.md
+for more details.
 """
 
 import torch
 import torch.distributed as dist
+import torch.distributed._functional_collectives as ft_c
 from torch.distributed import ProcessGroup, ReduceOp
 
 from sglang.multimodal_gen.runtime.distributed.device_communicators.base_device_communicator import (
@@ -237,3 +244,116 @@ class XpuCommunicator(DeviceCommunicatorBase):
         )
         # No explicit cleanup needed for PyTorch XCCL backend
         pass
+
+    def _maybe_wait(self, tensor: torch.Tensor) -> torch.Tensor:
+        """
+        Wait for async tensor if needed.
+        
+        When using functional collectives, the result may be an AsyncCollectiveTensor.
+        This method waits for the operation to complete.
+        """
+        if isinstance(tensor, ft_c.AsyncCollectiveTensor):
+            return tensor.wait()
+        return tensor
+
+    def all_to_all_4D(
+        self, input_: torch.Tensor, scatter_dim: int = 2, gather_dim: int = 1
+    ) -> torch.Tensor:
+        """
+        Perform all-to-all operation on 4D tensors for XPU.
+        
+        This implementation uses torch.distributed._functional_collectives.all_to_all_single
+        instead of torch.distributed.all_to_all_single because the latter has a known bug
+        on Intel XPU with XCCL backend that causes data corruption.
+        
+        This operation is used for redistributing attention heads and sequence dimensions
+        in distributed attention computation (e.g., Ulysses attention).
+        
+        Args:
+            input_: 4D input tensor [B, S, H, D] or similar
+            scatter_dim: Dimension to scatter (default: 2, heads)
+            gather_dim: Dimension to gather (default: 1, sequence)
+            
+        Returns:
+            Redistributed tensor
+            
+        Supported modes:
+        - scatter_dim=2, gather_dim=1: Redistribute heads, used for forward pass
+          [B, shard_S, H, D] -> [B, S, shard_H, D]
+        - scatter_dim=1, gather_dim=2: Redistribute sequence, used for backward pass
+          [B, S, shard_H, D] -> [B, shard_S, H, D]
+        """
+        if self.world_size == 1:
+            return input_
+
+        assert input_.dim() == 4, (
+            f"input must be 4D tensor, got {input_.dim()} with shape {input_.shape}"
+        )
+
+        if scatter_dim == 2 and gather_dim == 1:
+            # Forward pass: scatter heads, gather sequence
+            # [B, shard_seqlen, H, D] -> [B, seqlen, shard_H, D]
+            bs, shard_seqlen, hn, hd = input_.shape
+            shard_hn = hn // self.world_size
+
+            # Transpose to [H, shard_seqlen, B, D] for all-to-all
+            input_t = input_.transpose(0, 2).contiguous()
+            
+            # Use ft_c.all_to_all_single instead of dist.all_to_all_single
+            # to avoid XCCL data corruption bug
+            input_shape = input_t.shape
+            output = ft_c.all_to_all_single(
+                input_t.flatten(),
+                output_split_sizes=None,
+                input_split_sizes=None,
+                group=self.device_group
+            )
+            output = self._maybe_wait(output)
+            output = output.reshape(input_shape)
+
+            # Split and concatenate: [H, shard_seqlen, B, D] -> [shard_H, seqlen, B, D]
+            output = torch.cat(output.split(shard_hn), dim=1)
+            
+            # Transpose back to [B, seqlen, shard_H, D]
+            output = output.transpose(0, 2).contiguous()
+
+            return output
+
+        elif scatter_dim == 1 and gather_dim == 2:
+            # Backward pass: scatter sequence, gather heads
+            # [B, seqlen, shard_H, D] -> [B, shard_seqlen, H, D]
+            bs, seqlen, shard_hn, hd = input_.shape
+            shard_seqlen = seqlen // self.world_size
+
+            # Transpose to [shard_H, seqlen, B, D]
+            input_t = input_.transpose(0, 2).contiguous()
+
+            # Reshape for all-to-all: [shard_H * world_size, shard_seqlen, B, D]
+            input_t = (
+                input_t.reshape(shard_hn, self.world_size, shard_seqlen, bs, hd)
+                .transpose(0, 1)
+                .reshape(shard_hn * self.world_size, shard_seqlen, bs, hd)
+                .contiguous()
+            )
+
+            # Use ft_c.all_to_all_single instead of dist.all_to_all_single
+            input_shape = input_t.shape
+            output = ft_c.all_to_all_single(
+                input_t.flatten(),
+                output_split_sizes=None,
+                input_split_sizes=None,
+                group=self.device_group
+            )
+            output = self._maybe_wait(output)
+            output = output.reshape(input_shape)
+
+            # Transpose back to [B, shard_seqlen, H, D]
+            output = output.transpose(0, 2).contiguous()
+
+            return output
+
+        else:
+            raise RuntimeError(
+                f"Invalid scatter_dim={scatter_dim}, gather_dim={gather_dim}. "
+                f"Only (scatter_dim=2, gather_dim=1) and (scatter_dim=1, gather_dim=2) are supported."
+            )

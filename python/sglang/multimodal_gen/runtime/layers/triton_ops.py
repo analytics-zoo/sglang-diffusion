@@ -224,7 +224,7 @@ def fuse_scale_shift_kernel(
     block_l: int = 128,
     block_c: int = 128,
 ):
-    assert x.is_cuda and scale.is_cuda
+    # assert x.is_cuda and scale.is_cuda
     assert x.is_contiguous()
 
     B, L, C = x.shape

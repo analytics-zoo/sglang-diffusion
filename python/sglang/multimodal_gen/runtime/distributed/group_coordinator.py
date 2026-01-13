@@ -211,6 +211,20 @@ class GroupCoordinator:
                     device_group=self.device_group,
                     unique_name=self.unique_name,
                 )
+            elif current_platform.is_xpu():
+                # For Intel XPU, use the XPU communicator with XCCL backend
+                # This communicator uses ft_c.all_to_all_single instead of
+                # dist.all_to_all_single to avoid XCCL data corruption bug
+                from sglang.multimodal_gen.runtime.distributed.device_communicators.xpu_communicator import (
+                    XpuCommunicator,
+                )
+
+                self.device_communicator = XpuCommunicator(
+                    cpu_group=self.cpu_group,
+                    device=self.device,
+                    device_group=self.device_group,
+                    unique_name=self.unique_name,
+                )
             else:
                 # For MPS and CPU, use the CPU communicator
                 self.device_communicator = CpuCommunicator(
