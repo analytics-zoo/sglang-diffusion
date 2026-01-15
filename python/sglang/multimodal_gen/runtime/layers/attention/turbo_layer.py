@@ -4,6 +4,7 @@ from typing import Any, Callable, List, Tuple, Union
 
 import torch
 import torch.distributed as dist
+import torch.distributed._functional_collectives as ft_c
 import torch.nn as nn
 import torch.nn.functional as F
 import triton
@@ -14,12 +15,66 @@ from torch.distributed import ProcessGroup
 from torch.nn import Module
 
 
+def _is_xpu_platform() -> bool:
+    """Check if running on Intel XPU platform."""
+    return hasattr(torch, 'xpu') and torch.xpu.is_available()
+
+
 def _get_device_stream_context():
     """Get the appropriate stream context for XPU or CUDA."""
-    if hasattr(torch, 'xpu') and torch.xpu.is_available():
+    if _is_xpu_platform():
         return torch.xpu.Stream(), torch.xpu.stream, torch.xpu.current_stream
     else:
         return torch.cuda.Stream(), torch.cuda.stream, torch.cuda.current_stream
+
+
+def _maybe_wait(tensor: torch.Tensor) -> torch.Tensor:
+    """Wait for async tensor if needed (for functional collectives)."""
+    if isinstance(tensor, ft_c.AsyncCollectiveTensor):
+        return tensor.wait()
+    return tensor
+
+
+def _xpu_safe_all_to_all_single(
+    output: torch.Tensor, 
+    input_: torch.Tensor, 
+    group: ProcessGroup, 
+    async_op: bool = False
+) -> torch.Tensor:
+    """
+    XPU-safe all_to_all_single that uses ft_c API to avoid XCCL data corruption bug.
+    
+    On Intel XPU with XCCL backend, torch.distributed.all_to_all_single has a known bug
+    that causes data corruption. This function uses torch.distributed._functional_collectives
+    .all_to_all_single which works correctly.
+    
+    Args:
+        output: Output tensor (will be filled with result)
+        input_: Input tensor
+        group: Process group
+        async_op: Whether to run asynchronously (NOTE: async_op is not supported 
+                  with ft_c.all_to_all_single, will run synchronously)
+    
+    Returns:
+        The output tensor
+    """
+    if _is_xpu_platform():
+        # Use ft_c.all_to_all_single for XPU to avoid XCCL bug
+        # Note: ft_c doesn't support in-place output, so we need to copy
+        input_shape = input_.shape
+        result = ft_c.all_to_all_single(
+            input_.flatten(),
+            output_split_sizes=None,
+            input_split_sizes=None,
+            group=group
+        )
+        result = _maybe_wait(result)
+        output.copy_(result.reshape(input_shape))
+        return output
+    else:
+        # Use dist.all_to_all_single for CUDA/other platforms
+        dist.all_to_all_single(output, input_, group=group, async_op=async_op)
+        return output
 
 
 def post_all2all(local_seq_2_local_head, seq_world_size):
@@ -62,7 +117,8 @@ def single_all_to_all(input, local_seq_2_local_head, group, async_op=False):
         post_all2all_fun = post_all2all(local_seq_2_local_head, seq_world_size)
 
     output = torch.empty_like(input_t)
-    dist.all_to_all_single(output, input_t, group=group, async_op=async_op)
+    # Use XPU-safe all_to_all_single to avoid XCCL data corruption bug
+    _xpu_safe_all_to_all_single(output, input_t, group=group, async_op=async_op)
 
     res = post_all2all_fun(output)
     return res
@@ -78,50 +134,74 @@ def async_a2a_communicate(
     """
     A2A communication for context parallelism. best used in communicate qkv
     Modified from Nvidia Transformer Engine.
+    
+    Note: On Intel XPU, async_op is not supported with ft_c.all_to_all_single,
+    so operations are performed synchronously to avoid XCCL data corruption.
     """
     # Determine stream context based on device type
-    is_xpu = hasattr(torch, 'xpu') and torch.xpu.is_available()
+    is_xpu = _is_xpu_platform()
     stream_context = torch.xpu.stream if is_xpu else torch.cuda.stream
     current_stream_fn = torch.xpu.current_stream if is_xpu else torch.cuda.current_stream
     
     a2a_inputs = [a2a_inputs] if not isinstance(a2a_inputs, list) else a2a_inputs
     a2a_outputs, a2a_reqs = [None] * len(a2a_inputs), [None] * len(a2a_inputs)
     a2a_post_fns = [None] * len(a2a_inputs)
-    if local_seq_2_local_head:
-        for i in range(len(a2a_inputs) + 2):
-            if 0 < i < len(a2a_inputs) + 1:
-                a2a_outputs[i - 1] = torch.empty_like(a2a_inputs[i - 1])
-                a2a_reqs[i - 1] = torch.distributed.all_to_all_single(
-                    a2a_outputs[i - 1], a2a_inputs[i - 1], group=cp_group, async_op=True
-                )
-                a2a_post_fns[i - 1] = post_all2all(local_seq_2_local_head, cp_size)
-            if i > 1:
-                with stream_context(cp_stream):
-                    a2a_reqs[i - 2].wait()
-                    a2a_outputs[i - 2] = a2a_post_fns[i - 2](a2a_outputs[i - 2])
-            if i < len(a2a_inputs):
+    
+    if is_xpu:
+        # XPU path: use synchronous ft_c.all_to_all_single to avoid XCCL bug
+        if local_seq_2_local_head:
+            for i in range(len(a2a_inputs)):
                 a2a_inputs[i] = rearrange(
                     a2a_inputs[i], "bs seq_len (w h) d -> w bs seq_len h d", w=cp_size
                 ).contiguous()
-    else:
-        for i in range(len(a2a_inputs) + 2):
-            if 0 < i < len(a2a_inputs) + 1:
-                a2a_outputs[i - 1] = torch.empty_like(a2a_inputs[i - 1])
-                a2a_reqs[i - 1] = torch.distributed.all_to_all_single(
-                    a2a_outputs[i - 1], a2a_inputs[i - 1], group=cp_group, async_op=True
-                )
-                a2a_post_fns[i - 1] = post_all2all(local_seq_2_local_head, cp_size)
-            if i < len(a2a_inputs):
+                a2a_outputs[i] = torch.empty_like(a2a_inputs[i])
+                _xpu_safe_all_to_all_single(a2a_outputs[i], a2a_inputs[i], group=cp_group)
+                a2a_outputs[i] = post_all2all(local_seq_2_local_head, cp_size)(a2a_outputs[i])
+        else:
+            for i in range(len(a2a_inputs)):
                 a2a_inputs[i] = rearrange(
                     a2a_inputs[i], "bs (w s) h d -> w bs s h d", w=cp_size
                 ).contiguous()
-            if i > 1:
-                with stream_context(cp_stream):
-                    a2a_reqs[i - 2].wait()
-                    a2a_outputs[i - 2] = a2a_post_fns[i - 2](a2a_outputs[i - 2])
-    current_stream_fn().wait_stream(cp_stream)
+                a2a_outputs[i] = torch.empty_like(a2a_inputs[i])
+                _xpu_safe_all_to_all_single(a2a_outputs[i], a2a_inputs[i], group=cp_group)
+                a2a_outputs[i] = post_all2all(local_seq_2_local_head, cp_size)(a2a_outputs[i])
+    else:
+        # CUDA path: use asynchronous dist.all_to_all_single
+        if local_seq_2_local_head:
+            for i in range(len(a2a_inputs) + 2):
+                if 0 < i < len(a2a_inputs) + 1:
+                    a2a_outputs[i - 1] = torch.empty_like(a2a_inputs[i - 1])
+                    a2a_reqs[i - 1] = torch.distributed.all_to_all_single(
+                        a2a_outputs[i - 1], a2a_inputs[i - 1], group=cp_group, async_op=True
+                    )
+                    a2a_post_fns[i - 1] = post_all2all(local_seq_2_local_head, cp_size)
+                if i > 1:
+                    with stream_context(cp_stream):
+                        a2a_reqs[i - 2].wait()
+                        a2a_outputs[i - 2] = a2a_post_fns[i - 2](a2a_outputs[i - 2])
+                if i < len(a2a_inputs):
+                    a2a_inputs[i] = rearrange(
+                        a2a_inputs[i], "bs seq_len (w h) d -> w bs seq_len h d", w=cp_size
+                    ).contiguous()
+        else:
+            for i in range(len(a2a_inputs) + 2):
+                if 0 < i < len(a2a_inputs) + 1:
+                    a2a_outputs[i - 1] = torch.empty_like(a2a_inputs[i - 1])
+                    a2a_reqs[i - 1] = torch.distributed.all_to_all_single(
+                        a2a_outputs[i - 1], a2a_inputs[i - 1], group=cp_group, async_op=True
+                    )
+                    a2a_post_fns[i - 1] = post_all2all(local_seq_2_local_head, cp_size)
+                if i < len(a2a_inputs):
+                    a2a_inputs[i] = rearrange(
+                        a2a_inputs[i], "bs (w s) h d -> w bs s h d", w=cp_size
+                    ).contiguous()
+                if i > 1:
+                    with stream_context(cp_stream):
+                        a2a_reqs[i - 2].wait()
+                        a2a_outputs[i - 2] = a2a_post_fns[i - 2](a2a_outputs[i - 2])
+        current_stream_fn().wait_stream(cp_stream)
+    
     return a2a_outputs[0] if len(a2a_inputs) == 1 else a2a_outputs
-
 
 @triton.jit
 def _attn_fwd(
