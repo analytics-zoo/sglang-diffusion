@@ -58,17 +58,6 @@ def _xpu_safe_all_to_all_single(
     Returns:
         The output tensor
     """
-    # Log the first call per unique shape to debug
-    if not hasattr(_xpu_safe_all_to_all_single, '_logged_shapes'):
-        _xpu_safe_all_to_all_single._logged_shapes = set()
-    
-    world_size = dist.get_world_size(group)
-    shape_key = (input_.shape, world_size, _is_xpu_platform())
-    if shape_key not in _xpu_safe_all_to_all_single._logged_shapes:
-        _xpu_safe_all_to_all_single._logged_shapes.add(shape_key)
-        rank = dist.get_rank(group)
-        print(f"[_xpu_safe_all_to_all_single] rank={rank}, world_size={world_size}, "
-              f"input_shape={input_.shape}, is_xpu={_is_xpu_platform()}")
     
     if _is_xpu_platform():
         # Use ft_c.all_to_all_single for XPU to avoid XCCL bug
