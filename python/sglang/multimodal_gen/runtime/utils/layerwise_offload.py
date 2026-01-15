@@ -218,7 +218,10 @@ class LayerwiseOffloadManager:
         if not self.enabled or self.device is None:
             return
         if self.copy_stream is not None:
-            torch.cuda.current_stream().wait_stream(self.copy_stream)
+            if self._is_xpu:
+                torch.xpu.current_stream().wait_stream(self.copy_stream)
+            else:
+                torch.cuda.current_stream().wait_stream(self.copy_stream)
 
         for layer_idx in list(self._gpu_layers):
             self.release_layer(layer_idx)
@@ -229,7 +232,10 @@ class LayerwiseOffloadManager:
         if not self.enabled or self.device is None:
             return
         if self.copy_stream is not None:
-            torch.cuda.current_stream().wait_stream(self.copy_stream)
+            if self._is_xpu:
+                torch.xpu.current_stream().wait_stream(self.copy_stream)
+            else:
+                torch.cuda.current_stream().wait_stream(self.copy_stream)
 
         for layer_idx in range(self.num_layers):
             if layer_idx not in self._gpu_layers:
@@ -244,7 +250,10 @@ class LayerwiseOffloadManager:
             return
 
         if self.copy_stream is not None:
-            torch.cuda.current_stream().wait_stream(self.copy_stream)
+            if self._is_xpu:
+                torch.xpu.current_stream().wait_stream(self.copy_stream)
+            else:
+                torch.cuda.current_stream().wait_stream(self.copy_stream)
 
         # Collect current GPU weights and write back to CPU buffer
         for name, meta in self._weight_metadata.get(layer_idx, {}).items():
@@ -263,7 +272,10 @@ class LayerwiseOffloadManager:
         if not self.enabled or self.device is None:
             return
         if self.copy_stream is not None:
-            torch.cuda.current_stream().wait_stream(self.copy_stream)
+            if self._is_xpu:
+                torch.xpu.current_stream().wait_stream(self.copy_stream)
+            else:
+                torch.cuda.current_stream().wait_stream(self.copy_stream)
 
         for layer_idx in list(self._gpu_layers):
             self.sync_layer_to_cpu(layer_idx)
@@ -283,7 +295,10 @@ class LayerwiseOffloadManager:
         def make_post_hook(i):
             def hook(module, input, output):
                 if self.copy_stream is not None:
-                    torch.cuda.current_stream().wait_stream(self.copy_stream)
+                    if self._is_xpu:
+                        torch.xpu.current_stream().wait_stream(self.copy_stream)
+                    else:
+                        torch.cuda.current_stream().wait_stream(self.copy_stream)
                 self.release_layer(i)
 
             return hook
