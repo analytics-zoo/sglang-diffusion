@@ -285,6 +285,17 @@ class XpuCommunicator(DeviceCommunicatorBase):
         """
         if self.world_size == 1:
             return input_
+        
+        # Debug logging - only log once per unique shape
+        if not hasattr(self, '_logged_shapes'):
+            self._logged_shapes = set()
+        shape_key = (input_.shape, scatter_dim, gather_dim, self.world_size)
+        if shape_key not in self._logged_shapes:
+            self._logged_shapes.add(shape_key)
+            logger.info(
+                f"[XpuCommunicator.all_to_all_4D] rank={self.rank}, world_size={self.world_size}, "
+                f"input_shape={input_.shape}, scatter_dim={scatter_dim}, gather_dim={gather_dim}"
+            )
 
         assert input_.dim() == 4, (
             f"input must be 4D tensor, got {input_.dim()} with shape {input_.shape}"

@@ -33,9 +33,27 @@ def _maybe_wait(tensor: torch.Tensor) -> torch.Tensor:
     return tensor
 
 
+# Global flag to prevent duplicate logging
+_usp_logged_shapes = set()
+
+
 def _usp_all_to_all_single(x: torch.Tensor) -> torch.Tensor:
+    global _usp_logged_shapes
     ulysses_pg = get_sp_group().ulysses_group
     assert ulysses_pg is not None, "Ulysses process group is not initialized."
+    
+    # Debug logging - only log once per unique shape
+    import torch.distributed as dist
+    world_size = dist.get_world_size(ulysses_pg)
+    shape_key = (x.shape, world_size)
+    if shape_key not in _usp_logged_shapes:
+        _usp_logged_shapes.add(shape_key)
+        rank = dist.get_rank(ulysses_pg)
+        logger.info(
+            f"[_usp_all_to_all_single] rank={rank}, world_size={world_size}, "
+            f"input_shape={x.shape}"
+        )
+    
     x_shape = x.shape
     x = x.flatten()
     x = ft_c.all_to_all_single(
