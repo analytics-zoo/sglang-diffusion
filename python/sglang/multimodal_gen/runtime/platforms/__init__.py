@@ -125,6 +125,7 @@ builtin_platform_plugins = {
     "xpu": xpu_platform_plugin,
     "mps": mps_platform_plugin,
     "cpu": cpu_platform_plugin,
+    "musa": musa_platform_plugin,
 }
 
 
@@ -149,6 +150,11 @@ def resolve_current_platform_cls_qualname() -> str:
 
     # Fall back to CUDA
     platform_cls_qualname = cuda_platform_plugin()
+    if platform_cls_qualname is not None:
+        return platform_cls_qualname
+
+    # Fall back to MUSA
+    platform_cls_qualname = musa_platform_plugin()
     if platform_cls_qualname is not None:
         return platform_cls_qualname
 
