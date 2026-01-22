@@ -78,6 +78,7 @@ def _xpu_safe_all_to_all_single(
     Returns:
         The output tensor
     """
+    
     if _is_xpu_platform():
         # Use ft_c.all_to_all_single for XPU to avoid XCCL bug
         # Note: ft_c doesn't support in-place output, so we need to copy

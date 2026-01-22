@@ -40,7 +40,7 @@ class LayerwiseOffloadManager:
         self.pin_cpu_memory = pin_cpu_memory
 
         # Check for available device (XPU or CUDA)
-        self._is_xpu = hasattr(torch, 'xpu') and torch.xpu.is_available()
+        self._is_xpu = hasattr(torch, "xpu") and torch.xpu.is_available()
         self._is_cuda = torch.cuda.is_available()
         self.enabled = bool(enabled and (self._is_xpu or self._is_cuda))
         if not self.enabled:

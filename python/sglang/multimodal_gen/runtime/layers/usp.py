@@ -36,6 +36,7 @@ def _maybe_wait(tensor: torch.Tensor) -> torch.Tensor:
 def _usp_all_to_all_single(x: torch.Tensor) -> torch.Tensor:
     ulysses_pg = get_sp_group().ulysses_group
     assert ulysses_pg is not None, "Ulysses process group is not initialized."
+    
     x_shape = x.shape
     x = x.flatten()
     x = ft_c.all_to_all_single(
