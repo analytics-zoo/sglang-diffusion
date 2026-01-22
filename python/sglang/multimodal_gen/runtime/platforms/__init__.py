@@ -118,6 +118,24 @@ def xpu_platform_plugin() -> str | None:
         "sglang.multimodal_gen.runtime.platforms.xpu.XpuPlatform" if is_xpu else None
     )
 
+def musa_platform_plugin() -> str | None:
+    is_musa = False
+
+    try:
+        import pymtml
+
+        pymtml.mtmlLibraryInit()
+        try:
+            is_musa = pymtml.mtmlLibraryCountDevice() > 0
+        finally:
+            pymtml.mtmlLibraryShutDown()
+    except Exception as e:
+        logger.info("MUSA platform is unavailable: %s", e)
+
+    return (
+        "sglang.multimodal_gen.runtime.platforms.musa.MusaPlatform" if is_musa else None
+    )
+
 
 builtin_platform_plugins = {
     "cuda": cuda_platform_plugin,

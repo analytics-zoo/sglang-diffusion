@@ -4,14 +4,11 @@ from typing import Any, Callable, List, Tuple, Type, Union
 
 import torch
 import torch.distributed as dist
-<<<<<<< HEAD
 import torch.distributed._functional_collectives as ft_c
 import torch.nn as nn
 import torch.nn.functional as F
 import triton
 import triton.language as tl
-=======
->>>>>>> 71cb9d0302e90bbadee274d908b0aca4e21f814e
 from einops import rearrange
 from torch import Tensor
 from torch.distributed import ProcessGroup
