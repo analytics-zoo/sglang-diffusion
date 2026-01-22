@@ -145,6 +145,7 @@ class RMSNorm(CustomOp):
         Uses sgl_kernel if available, otherwise falls back to native implementation.
         """
         shape = x.shape
+        x = x.contiguous()
         x = x.view(-1, shape[-1])
         if x.dtype == torch.float or self.variance_size_override is not None:
             return self.forward_native(x.view(shape), residual)
