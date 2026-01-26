@@ -90,7 +90,7 @@ diffusion = [
   "remote-pdb",
   "yunchang==0.6.3.post1",
   "runai_model_streamer",
-  "cache-dit==1.1.8"
+  "cache-dit==1.2.0"
 ]
 
 tracing = [
@@ -115,6 +115,11 @@ test = [
 ]
 
 dev = ["sglang[test]"]
+
+all = [
+  "sglang[diffusion]",
+  "sglang[tracing]",
+]
 
 [tool.uv.extra-build-dependencies]
 st-attn = ["torch", "setuptools"]
