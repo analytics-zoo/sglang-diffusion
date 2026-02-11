@@ -44,12 +44,12 @@ class AttentionBackendEnum(enum.Enum):
 class PlatformEnum(enum.Enum):
     CUDA = enum.auto()
     ROCM = enum.auto()
-    XPU = enum.auto()  # Intel XPU (GPU) support
     TPU = enum.auto()
     CPU = enum.auto()
     MPS = enum.auto()
     NPU = enum.auto()
     MUSA = enum.auto()
+    XPU = enum.auto()  # Intel XPU (GPU) support
     OOT = enum.auto()
     UNSPECIFIED = enum.auto()
 
@@ -164,7 +164,7 @@ class Platform:
     @lru_cache(maxsize=1)
     def is_cuda_alike(self) -> bool:
         """Stateless version of :func:`torch.cuda.is_available`."""
-        return self._enum in (PlatformEnum.CUDA, PlatformEnum.ROCM, PlatformEnum.XPU)
+        return self._enum in (PlatformEnum.CUDA, PlatformEnum.ROCM)
 
     @lru_cache(maxsize=1)
     def is_mps(self) -> bool:
