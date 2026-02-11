@@ -176,9 +176,6 @@ class TextEncodingStage(PipelineStage):
               attention masks
         """
 
-        # # test
-        # device = "cpu"
-
         assert len(self.tokenizers) == len(self.text_encoders)
         assert len(self.text_encoders) == len(
             server_args.pipeline_config.text_encoder_configs

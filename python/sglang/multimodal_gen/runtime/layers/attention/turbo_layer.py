@@ -53,7 +53,7 @@ def _maybe_wait(tensor: torch.Tensor) -> torch.Tensor:
     return tensor
 
 
-def _xpu_safe_all_to_all_single(
+def _xpu_all_to_all_single(
     output: torch.Tensor, 
     input_: torch.Tensor, 
     group: ProcessGroup, 
@@ -137,7 +137,7 @@ def single_all_to_all(input, local_seq_2_local_head, group, async_op=False):
 
     output = torch.empty_like(input_t)
     # Use XPU-safe all_to_all_single to avoid XCCL data corruption bug
-    _xpu_safe_all_to_all_single(output, input_t, group=group, async_op=async_op)
+    _xpu_all_to_all_single(output, input_t, group=group, async_op=async_op)
 
     res = post_all2all_fun(output)
     return res
@@ -174,7 +174,7 @@ def async_a2a_communicate(
                     a2a_inputs[i], "bs seq_len (w h) d -> w bs seq_len h d", w=cp_size
                 ).contiguous()
                 a2a_outputs[i] = torch.empty_like(a2a_inputs[i])
-                _xpu_safe_all_to_all_single(a2a_outputs[i], a2a_inputs[i], group=cp_group)
+                _xpu_all_to_all_single(a2a_outputs[i], a2a_inputs[i], group=cp_group)
                 a2a_outputs[i] = post_all2all(local_seq_2_local_head, cp_size)(a2a_outputs[i])
         else:
             for i in range(len(a2a_inputs)):
@@ -182,7 +182,7 @@ def async_a2a_communicate(
                     a2a_inputs[i], "bs (w s) h d -> w bs s h d", w=cp_size
                 ).contiguous()
                 a2a_outputs[i] = torch.empty_like(a2a_inputs[i])
-                _xpu_safe_all_to_all_single(a2a_outputs[i], a2a_inputs[i], group=cp_group)
+                _xpu_all_to_all_single(a2a_outputs[i], a2a_inputs[i], group=cp_group)
                 a2a_outputs[i] = post_all2all(local_seq_2_local_head, cp_size)(a2a_outputs[i])
     else:
         # CUDA path: use asynchronous dist.all_to_all_single

@@ -157,11 +157,11 @@ def musa_platform_plugin() -> str | None:
 builtin_platform_plugins = {
     "cuda": cuda_platform_plugin,
     "rocm": rocm_platform_plugin,
-    "xpu": xpu_platform_plugin,
     "mps": mps_platform_plugin,
     "cpu": cpu_platform_plugin,
     "npu": npu_platform_plugin,
     "musa": musa_platform_plugin,
+    "xpu": xpu_platform_plugin,
 }
 
 

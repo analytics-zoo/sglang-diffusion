@@ -644,14 +644,10 @@ def maybe_init_distributed_environment_and_model_parallel(
         sequence_parallel_degree=sp_size,
     )
 
-    # Only set device if we're on a CUDA-alike platform
+    # Only set CUDA device if we're on a CUDA platform
     if current_platform.is_cuda_alike():
-        if hasattr(torch, 'xpu') and torch.xpu.is_available():
-            device = torch.device(f"xpu:{local_rank}")
-            torch.xpu.set_device(device)
-        else:
-            device = torch.device(f"cuda:{local_rank}")
-            torch.cuda.set_device(device)
+        device = torch.device(f"cuda:{local_rank}")
+        torch.cuda.set_device(device)
 
 
 def model_parallel_is_initialized() -> bool:

@@ -12,6 +12,7 @@ from typing import List, Optional
 import torch
 import torch.distributed as dist
 
+from sglang.multimodal_gen.runtime.platforms import current_platform
 from sglang.multimodal_gen.runtime.utils.logging_utils import init_logger
 
 logger = init_logger(__name__)
@@ -87,12 +88,16 @@ def _patch_cache_dit_similarity():
             mean_diff = (t1 - t2).abs().mean()
             mean_t1 = t1.abs().mean()
 
-        # Use SUM + divide instead of AVG, because XCCL (Intel oneCCL) does not support AVG
-        world_size = dist.get_world_size(target_group)
-        dist.all_reduce(mean_diff, op=dist.ReduceOp.SUM, group=target_group)
-        dist.all_reduce(mean_t1, op=dist.ReduceOp.SUM, group=target_group)
-        mean_diff = mean_diff / world_size
-        mean_t1 = mean_t1 / world_size
+        # Use SUM + divide instead of AVG on XPU, because XCCL (Intel oneCCL) does not support AVG
+        if current_platform.is_xpu():
+            world_size = dist.get_world_size(target_group)
+            dist.all_reduce(mean_diff, op=dist.ReduceOp.SUM, group=target_group)
+            dist.all_reduce(mean_t1, op=dist.ReduceOp.SUM, group=target_group)
+            mean_diff = mean_diff / world_size
+            mean_t1 = mean_t1 / world_size
+        else:
+            dist.all_reduce(mean_diff, op=dist.ReduceOp.AVG, group=target_group)
+            dist.all_reduce(mean_t1, op=dist.ReduceOp.AVG, group=target_group)
 
         diff = (mean_diff / mean_t1).item()
         self.add_residual_diff(diff)

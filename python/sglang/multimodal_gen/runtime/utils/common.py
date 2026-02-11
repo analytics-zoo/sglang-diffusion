@@ -241,27 +241,6 @@ def get_zmq_socket(
 
 # https://pytorch.org/docs/stable/notes/hip.html#checking-for-hip
 
-
-@lru_cache(maxsize=1)
-def is_hip() -> bool:
-    return torch.version.hip is not None
-
-
-@lru_cache(maxsize=1)
-def is_cuda() -> bool:
-    return torch.cuda.is_available() and torch.version.cuda is not None
-
-
-@lru_cache(maxsize=1)
-def is_cuda_alike() -> bool:
-    return is_cuda() or is_hip() or is_xpu()
-
-
-@lru_cache(maxsize=1)
-def is_xpu() -> bool:
-    return hasattr(torch, "xpu") and torch.xpu.is_available()
-
-
 @lru_cache(maxsize=1)
 def is_host_cpu_x86() -> bool:
     machine = platform.machine().lower()
@@ -276,57 +255,9 @@ def is_host_cpu_x86() -> bool:
 
 
 def set_cuda_arch():
-    """Set CUDA architecture for the current device. Kept for backward compatibility."""
-    set_device_arch()
-
-
-def set_device_arch():
-    """Set device-specific architecture environment variables."""
-    if is_cuda():
-        capability = torch.cuda.get_device_capability()
-        arch = f"{capability[0]}.{capability[1]}"
-        os.environ["TORCH_CUDA_ARCH_LIST"] = f"{arch}{'+PTX' if arch == '9.0' else ''}"
-    elif is_xpu():
-        # XPU doesn't have compute capability like CUDA
-        # Set a generic marker if needed
-        os.environ["TORCH_XPU_ARCH"] = "xpu"
-    # For other devices, no action needed
-
-
-# Device abstraction utilities
-
-
-def get_device_type() -> str:
-    """
-    Get the current device type as a string.
-    
-    Returns:
-        str: 'cuda', 'xpu', 'cpu', etc.
-    """
-    if is_cuda():
-        return "cuda"
-    elif is_xpu():
-        return "xpu"
-    elif is_hip():
-        return "cuda"  # ROCm uses 'cuda' backend string in PyTorch
-    else:
-        return "cpu"
-
-
-def get_device_module():
-    """
-    Get the appropriate torch device module (torch.cuda, torch.xpu, etc.).
-    
-    Returns:
-        The torch device module for the current platform.
-    """
-    device_type = get_device_type()
-    if device_type == "cuda":
-        return torch.cuda
-    elif device_type == "xpu":
-        return torch.xpu
-    else:
-        raise RuntimeError(f"Unsupported device type: {device_type}")
+    capability = torch.cuda.get_device_capability()
+    arch = f"{capability[0]}.{capability[1]}"
+    os.environ["TORCH_CUDA_ARCH_LIST"] = f"{arch}{'+PTX' if arch == '9.0' else ''}"
 
 
 def device_synchronize(device: torch.device | None = None):
