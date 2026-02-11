@@ -235,13 +235,6 @@ class TextEncodingStage(PipelineStage):
                 if i < len(text_encoder_extra_args) and text_encoder_extra_args[i]
                 else {}
             )
-            
-            # Determine the device where text_encoder resides
-            # This handles CPU offload case where model is on CPU
-            try:
-                encoder_device = next(text_encoder.parameters()).device
-            except StopIteration:
-                encoder_device = target_device
 
             processed_text_list: list[str] = []
             for prompt_str in texts:
@@ -256,7 +249,7 @@ class TextEncodingStage(PipelineStage):
 
             text_inputs: dict = server_args.pipeline_config.tokenize_prompt(
                 processed_text_list, tokenizer, tok_kwargs
-            ).to(encoder_device)  # Use encoder_device to match text_encoder's device
+            ).to(target_device)
 
             input_ids = text_inputs["input_ids"]
             is_flux_v1 = isinstance(
@@ -265,7 +258,7 @@ class TextEncodingStage(PipelineStage):
             is_flux_t5 = is_flux_v1 and i == 1
 
             if is_flux_t5:
-                attention_mask = torch.ones(input_ids.shape[:2], device=encoder_device)
+                attention_mask = torch.ones(input_ids.shape[:2], device=target_device)
             else:
                 attention_mask = text_inputs["attention_mask"]
             with set_forward_context(current_timestep=0, attn_metadata=None):
@@ -278,18 +271,10 @@ class TextEncodingStage(PipelineStage):
             prompt_embeds = postprocess_func(outputs, text_inputs)
             if dtype is not None:
                 prompt_embeds = prompt_embeds.to(dtype=dtype)
-            
-            # Move embeddings to target device (needed when encoder is on CPU due to offload)
-            if encoder_device != target_device:
-                prompt_embeds = prompt_embeds.to(target_device)
-                attention_mask = attention_mask.to(target_device)
 
             embeds_list.append(prompt_embeds)
             if is_flux_v1:
-                pooler_output = outputs.pooler_output
-                if encoder_device != target_device and pooler_output is not None:
-                    pooler_output = pooler_output.to(target_device)
-                pooled_embeds_list.append(pooler_output)
+                pooled_embeds_list.append(outputs.pooler_output)
             if return_attention_mask:
                 attn_masks_list.append(attention_mask)
 
