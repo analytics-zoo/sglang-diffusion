@@ -274,6 +274,20 @@ class CLIPAttention(nn.Module):
                         is_causal=True,
                         scale=self.scale,
                     )
+            elif current_platform.is_rocm() or current_platform.is_musa():
+                # ROCm: Using both is_causal=True and attn_mask causes NaN.
+                # Use is_causal=True alone (padding mask not needed for CLIP
+                # since pooler_output comes from EOS token before padding).
+                # XXX (MUSA): Torch SDPA on MUSA currently does not support
+                # using both `attn_mask` and `is_causal=True` simultaneously.
+                attn_output = torch.nn.functional.scaled_dot_product_attention(
+                    query_states,
+                    key_states,
+                    value_states,
+                    attn_mask=None,
+                    is_causal=True,
+                    scale=self.scale,
+                )
             else:
                 if attention_mask is not None:
                     # SDPA requires [B, 1, 1, S] or [B, S, S] format mask
@@ -294,7 +308,7 @@ class CLIPAttention(nn.Module):
                     key_states,
                     value_states,
                     attn_mask=attn_mask,
-                    is_causal=True,
+                    is_causal=attention_mask is None,
                     scale=self.scale,
                 )
             attn_output = attn_output.transpose(1, 2)

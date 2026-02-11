@@ -10,6 +10,7 @@ from typing import Any
 
 import torch
 
+from sglang.multimodal_gen import envs
 from sglang.multimodal_gen.runtime.platforms.interface import (
     AttentionBackendEnum,
     DeviceCapability,
@@ -43,6 +44,10 @@ class XpuPlatform(Platform):
     device_type: str = "xpu"
     dispatch_key: str = "XPU"
     device_control_env_var: str = "ZE_AFFINITY_MASK"  # Intel GPU environment variable
+
+    @classmethod
+    def get_local_torch_device(cls) -> torch.device:
+        return torch.device(f"xpu:{envs.LOCAL_RANK}")
 
     @classmethod
     @lru_cache(maxsize=8)
