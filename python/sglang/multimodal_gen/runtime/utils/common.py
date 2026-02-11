@@ -241,6 +241,7 @@ def get_zmq_socket(
 
 # https://pytorch.org/docs/stable/notes/hip.html#checking-for-hip
 
+
 @lru_cache(maxsize=1)
 def is_host_cpu_x86() -> bool:
     machine = platform.machine().lower()
@@ -258,62 +259,6 @@ def set_cuda_arch():
     capability = torch.cuda.get_device_capability()
     arch = f"{capability[0]}.{capability[1]}"
     os.environ["TORCH_CUDA_ARCH_LIST"] = f"{arch}{'+PTX' if arch == '9.0' else ''}"
-
-
-def device_synchronize(device: torch.device | None = None):
-    """
-    Synchronize the device (equivalent to torch.cuda.synchronize for any device).
-    
-    Args:
-        device: The device to synchronize. If None, synchronizes the current device.
-    """
-    if is_cuda() or is_hip():
-        torch.cuda.synchronize(device)
-    elif is_xpu():
-        torch.xpu.synchronize(device)
-
-
-def set_device(device_id: int):
-    """
-    Set the current device (equivalent to torch.cuda.set_device for any device).
-    
-    Args:
-        device_id: The device ID to set as current.
-    """
-    if is_cuda() or is_hip():
-        torch.cuda.set_device(device_id)
-    elif is_xpu():
-        torch.xpu.set_device(device_id)
-
-
-def reset_peak_memory_stats(device: torch.device | None = None):
-    """
-    Reset peak memory statistics for the device.
-    
-    Args:
-        device: The device for which to reset stats. If None, uses current device.
-    """
-    if is_cuda() or is_hip():
-        torch.cuda.reset_peak_memory_stats(device)
-    elif is_xpu():
-        torch.xpu.reset_peak_memory_stats(device)
-
-
-def max_memory_allocated(device: torch.device | None = None) -> int:
-    """
-    Get the maximum memory allocated on the device.
-    
-    Args:
-        device: The device to query. If None, uses current device.
-        
-    Returns:
-        int: Maximum memory allocated in bytes.
-    """
-    if is_cuda() or is_hip():
-        return torch.cuda.max_memory_allocated(device)
-    elif is_xpu():
-        return torch.xpu.max_memory_allocated(device)
-    return 0
 
 
 # env var managements

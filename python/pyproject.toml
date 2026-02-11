@@ -104,7 +104,6 @@ diffusion = [
   "moviepy>=2.0.0",
   "opencv-python-headless==4.10.0.84",
   "remote-pdb",
-  "yunchang==0.6.3.post1",
   "st_attn==0.0.7 ; platform_machine != 'aarch64' and platform_machine != 'arm64'",
   "vsa==0.0.4 ; platform_machine != 'aarch64' and platform_machine != 'arm64'",
   "runai_model_streamer>=0.15.5",

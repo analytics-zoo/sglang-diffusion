@@ -88,7 +88,7 @@ def _patch_cache_dit_similarity():
             mean_diff = (t1 - t2).abs().mean()
             mean_t1 = t1.abs().mean()
 
-        # Use SUM + divide instead of AVG on XPU, because XCCL (Intel oneCCL) does not support AVG
+        # Use SUM + divide instead of AVG on XPU, because XCCL in torch 2.9+xpu have issues for AVG
         if current_platform.is_xpu():
             world_size = dist.get_world_size(target_group)
             dist.all_reduce(mean_diff, op=dist.ReduceOp.SUM, group=target_group)
