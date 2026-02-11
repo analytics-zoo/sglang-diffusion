@@ -45,7 +45,7 @@ class CustomOp(nn.Module):
 
     def forward_xpu(self, *args, **kwargs) -> Any:
         # By default, assume XPU ops are compatible with CUDA ops
-        return self.forward_cuda(*args, **kwargs)
+        return self.forward_native(*args, **kwargs)
 
     def forward_npu(self, *args, **kwargs) -> Any:
         # By default, assume NPU ops are compatible with CUDA ops
