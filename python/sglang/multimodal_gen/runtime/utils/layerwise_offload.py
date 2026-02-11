@@ -66,8 +66,9 @@ class LayerwiseOffloadManager:
         self._weight_metadata: Dict[int, Dict[str, Dict[str, Any]]] = {}
         # layer indices that are already in gpu
         self._gpu_layers: Set[int] = set()
-        # layer_idx -> torch.cuda.Event for fine-grained sync, to make sure the weight is resident in pre-hook
-        self._prefetch_events: Dict[int, torch.cuda.Event] = {}
+        # layer_idx -> Event for fine-grained sync, to make sure the weight is resident in pre-hook
+        self._device_module = torch.get_device_module(self.device)
+        self._prefetch_events: Dict[int, Any] = {}
 
         self._named_parameters: Dict[str, torch.nn.Parameter] = {}
         self._named_buffers: Dict[str, torch.Tensor] = {}
@@ -198,7 +199,7 @@ class LayerwiseOffloadManager:
                 gpu_buffers[dtype] = gpu_buffer
 
         # record the prefetch event of this layer
-        event = torch.cuda.Event()
+        event = self._device_module.Event()
         event.record(self.copy_stream)
         self._prefetch_events[layer_idx] = event
 
@@ -318,7 +319,7 @@ class LayerwiseOffloadManager:
                 if i == 0:
                     self.prepare_for_next_req(non_blocking=False)
                 if i in self._prefetch_events:
-                    torch.cuda.current_stream().wait_event(self._prefetch_events[i])
+                    self._device_module.current_stream().wait_event(self._prefetch_events[i])
 
                 # trigger batch prefetch (i + prefetch_size ~ i + 2 * prefetch_size) if needed
                 if i % self.prefetch_size == 0:
