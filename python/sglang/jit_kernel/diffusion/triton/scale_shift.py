@@ -223,7 +223,7 @@ def fuse_scale_shift_kernel(
     block_l: int = 128,
     block_c: int = 128,
 ):
-    assert x.is_cuda and scale.is_cuda
+    assert (x.is_cuda and scale.is_cuda) or (x.is_xpu and scale.is_xpu)
     assert x.is_contiguous()
 
     B, L, C = x.shape
@@ -297,7 +297,10 @@ def fuse_scale_shift_kernel(
 
         # If both scalars and both zero, copy fast-path
         if need_scale_scalar and need_shift_scalar:
-            if (scale_blc.abs().max() == 0) and (shift_blc.abs().max() == 0):
+            if not (
+                scale_blc.any().to("cpu", non_blocking=True)
+                or shift_blc.any().to("cpu", non_blocking=True)
+            ):
                 output.copy_(x)
                 return output
 

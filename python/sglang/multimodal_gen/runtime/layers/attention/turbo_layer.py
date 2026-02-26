@@ -147,7 +147,7 @@ def async_a2a_communicate(
     a2a_inputs: Union[torch.Tensor, List[torch.Tensor]],
     cp_size: int,
     cp_group: ProcessGroup,
-    cp_stream,  # torch.cuda.Stream or torch.xpu.Stream
+    cp_stream: torch.get_device_module().Stream,
     local_seq_2_local_head: bool,
 ) -> Union[torch.Tensor, List[torch.Tensor]]:
     """
@@ -195,7 +195,7 @@ def async_a2a_communicate(
                     )
                     a2a_post_fns[i - 1] = post_all2all(local_seq_2_local_head, cp_size)
                 if i > 1:
-                    with stream_context(cp_stream):
+                    with torch.get_device_module().stream(cp_stream):
                         a2a_reqs[i - 2].wait()
                         a2a_outputs[i - 2] = a2a_post_fns[i - 2](a2a_outputs[i - 2])
                 if i < len(a2a_inputs):
@@ -215,7 +215,7 @@ def async_a2a_communicate(
                         a2a_inputs[i], "bs (w s) h d -> w bs s h d", w=cp_size
                     ).contiguous()
                 if i > 1:
-                    with stream_context(cp_stream):
+                    with torch.get_device_module().stream(cp_stream):
                         a2a_reqs[i - 2].wait()
                         a2a_outputs[i - 2] = a2a_post_fns[i - 2](a2a_outputs[i - 2])
         current_stream_fn().wait_stream(cp_stream)
@@ -251,7 +251,7 @@ class _SeqAllToAllQKV(torch.autograd.Function):
         k: Tensor,
         v: Tensor,
         cp_size: int,
-        cp_stream,  # torch.cuda.Stream or torch.xpu.Stream
+        cp_stream: torch.get_device_module().Stream,
         local_seq_2_local_head: bool,
     ) -> Tuple[Tensor, Tensor, Tensor]:
         ctx.group = group
