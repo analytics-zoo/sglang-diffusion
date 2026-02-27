@@ -36,6 +36,7 @@ class AttentionBackendEnum(enum.Enum):
     AITER = enum.auto()
     SLA_ATTN = enum.auto()
     SAGE_SLA_ATTN = enum.auto()
+    XPU_FLASH_ATTN = enum.auto()
     NO_ATTENTION = enum.auto()
 
     def __str__(self):

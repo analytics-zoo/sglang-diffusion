@@ -53,15 +53,27 @@ class XpuPlatform(Platform):
     @lru_cache(maxsize=8)
     def get_device_capability(cls, device_id: int = 0) -> DeviceCapability | None:
         """
-        XPU doesn't have a direct equivalent to CUDA compute capability.
-        We return a placeholder capability based on device generation.
+        Query XPU device capability via sgl_kernel.
+
+        Uses ``torch.ops.sgl_kernel.query_device`` when available, which maps
+        Intel GPU architectures to (major, minor) pairs:
+          - Xe2 (BMG-G21): (2, 0)
+          - (more architectures to be added)
+
+        Falls back to a generic (1, 0) if sgl_kernel is not installed or the
+        query fails.
         """
         try:
-            # XPU doesn't expose compute capability like CUDA
-            # Return a generic capability (major=1, minor=0) for compatibility
-            return DeviceCapability(major=1, minor=0)
+            major, minor = torch.ops.sgl_kernel.query_device.default(device_id)
+            return DeviceCapability(major=int(major), minor=int(minor))
         except Exception:
-            return None
+            # sgl_kernel not loaded or unsupported architecture – fall back
+            logger.warning(
+                "sgl_kernel.query_device not available; returning generic "
+                "XPU capability (1, 0). Install sgl-kernel-xpu for real "
+                "device capability detection."
+            )
+            return DeviceCapability(major=1, minor=0)
 
     @classmethod
     @lru_cache(maxsize=8)
@@ -188,6 +200,15 @@ class XpuPlatform(Platform):
             if hasattr(torch.xpu, "manual_seed_all"):
                 torch.xpu.manual_seed_all(seed)
 
+    # Backend class paths
+    _XPU_FLASH_ATTN_CLS = (
+        "sglang.multimodal_gen.runtime.layers.attention.backends"
+        ".xpu_flash_attn.XpuFlashAttentionBackend"
+    )
+    _SDPA_BACKEND_CLS = (
+        "sglang.multimodal_gen.runtime.layers.attention.backends.sdpa.SDPABackend"
+    )
+
     @classmethod
     def get_attn_backend_cls_str(
         cls,
@@ -197,50 +218,34 @@ class XpuPlatform(Platform):
     ) -> str:
         """
         Get the attention backend class for XPU.
-        
-        XPU currently only supports Torch SDPA backend.
-        Flash Attention and other CUDA-specific backends are not available.
+
+        By default, uses the XPU flash-attention backend backed by
+        ``sgl-kernel-xpu`` (cutlass-based ``torch.ops.sgl_kernel.fwd``).
+        When sgl-kernel is unavailable, the backend internally falls back to
+        ``torch.nn.functional.scaled_dot_product_attention``.
+
+        Use ``--attention-backend TORCH_SDPA`` to force the pure SDPA path.
         """
-        # Log the requested backend
-        if selected_backend is not None:
-            logger.info(f"Requested attention backend: {selected_backend}")
-        
-        # XPU-specific backends that are not supported
-        unsupported_backends = [
-            AttentionBackendEnum.FA,
-            AttentionBackendEnum.FA2,
-            AttentionBackendEnum.SLIDING_TILE_ATTN,
-            AttentionBackendEnum.SAGE_ATTN,
-            AttentionBackendEnum.SAGE_ATTN_3,
-            AttentionBackendEnum.VIDEO_SPARSE_ATTN,
-            AttentionBackendEnum.VMOBA_ATTN,
-        ]
-        
-        if selected_backend in unsupported_backends:
+        # Explicit SDPA request
+        if selected_backend == AttentionBackendEnum.TORCH_SDPA:
+            logger.info("Using Torch SDPA backend for XPU (explicitly requested).")
+            return cls._SDPA_BACKEND_CLS
+
+        # Non-XPU/SDPA backends are not supported on XPU
+        if (
+            selected_backend is not None
+            and selected_backend != AttentionBackendEnum.XPU_FLASH_ATTN
+        ):
             logger.warning(
                 f"{selected_backend.name} is not supported on XPU. "
-                "Falling back to Torch SDPA backend."
+                "Falling back to XPU flash-attention backend."
             )
-            selected_backend = AttentionBackendEnum.TORCH_SDPA
-        
-        # AIter is also CUDA/ROCm specific
-        if selected_backend == AttentionBackendEnum.AITER:
-            logger.warning(
-                "AIter backend is not supported on XPU. "
-                "Falling back to Torch SDPA backend."
-            )
-            selected_backend = AttentionBackendEnum.TORCH_SDPA
-        
-        # Default to SDPA for XPU
-        if selected_backend is None or selected_backend == AttentionBackendEnum.TORCH_SDPA:
-            logger.info("Using Torch SDPA backend for XPU.")
-            return "sglang.multimodal_gen.runtime.layers.attention.backends.sdpa.SDPABackend"
-        
-        # Fallback to SDPA for any other unhandled case
-        logger.warning(
-            f"Unhandled backend {selected_backend}, falling back to SDPA."
+
+        logger.info(
+            "Using XPU flash-attention backend "
+            "(sgl-kernel cutlass flash attention with SDPA fallback)."
         )
-        return "sglang.multimodal_gen.runtime.layers.attention.backends.sdpa.SDPABackend"
+        return cls._XPU_FLASH_ATTN_CLS
 
     @classmethod
     def get_device_communicator_cls(cls) -> str:

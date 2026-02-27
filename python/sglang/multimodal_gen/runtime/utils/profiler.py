@@ -57,6 +57,8 @@ class SGLDiffusionProfiler:
         activities = [torch.profiler.ProfilerActivity.CPU]
         if torch.cuda.is_available():
             activities.append(torch.profiler.ProfilerActivity.CUDA)
+        if hasattr(torch, "xpu") and torch.xpu.is_available():
+            activities.append(torch.profiler.ProfilerActivity.XPU)
         if current_platform.is_npu():
             activities.append(torch_npu.profiler.ProfilerActivity.NPU)
 
