@@ -155,7 +155,7 @@ class XpuPlatform(Platform):
     ) -> float:
         """
         Get available GPU memory on XPU device.
-        
+
         Returns:
             float: Available memory in GiB.
         """
@@ -251,7 +251,7 @@ class XpuPlatform(Platform):
     def get_device_communicator_cls(cls) -> str:
         """
         Get device communicator class for XPU distributed communication.
-        
+
         Returns the XPU communicator that uses oneCCL backend through PyTorch.
         """
         logger.info("Using XPU communicator with oneCCL backend.")

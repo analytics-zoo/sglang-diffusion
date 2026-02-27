@@ -88,6 +88,7 @@ def _patched_set_stream(stream) -> None:
     if stream is not None:
         prev_set_stream(stream)
 
+
 torch.get_device_module().set_stream = _patched_set_stream
 
 

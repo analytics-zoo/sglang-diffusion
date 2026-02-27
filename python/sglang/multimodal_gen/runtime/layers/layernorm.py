@@ -152,7 +152,7 @@ class RMSNorm(CustomOp):
         residual: Optional[torch.Tensor] = None,
     ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         """XPU-specific implementation of RMSNorm.
-        
+
         Uses sgl_kernel if available, otherwise falls back to native implementation.
         """
         shape = x.shape
@@ -162,7 +162,12 @@ class RMSNorm(CustomOp):
             return self.forward_native(x.view(shape), residual)
         if residual is not None:
             try:
-                fused_add_rmsnorm(x, residual.view(-1, shape[-1]), self.weight.data, self.variance_epsilon)
+                fused_add_rmsnorm(
+                    x,
+                    residual.view(-1, shape[-1]),
+                    self.weight.data,
+                    self.variance_epsilon,
+                )
                 return x.view(shape), residual
             except Exception:
                 return self.forward_native(x.view(shape), residual)

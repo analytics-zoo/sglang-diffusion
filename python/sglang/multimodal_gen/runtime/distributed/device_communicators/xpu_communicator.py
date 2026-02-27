@@ -28,7 +28,7 @@ logger = init_logger(__name__)
 class XpuCommunicator(DeviceCommunicatorBase):
     """
     Communicator for Intel XPU devices using oneCCL backend.
-    
+
     Intel XPU uses the XCCL (Collective Communications Library) backend through
     PyTorch's distributed communication interface. Unlike NVIDIA NCCL, XCCL
     is directly integrated into PyTorch for XPU devices.
@@ -43,7 +43,7 @@ class XpuCommunicator(DeviceCommunicatorBase):
     ):
         """
         Initialize XPU communicator.
-        
+
         Args:
             cpu_group: CPU process group for control-plane communication
             device: XPU device (e.g., torch.device('xpu:0'))
@@ -51,14 +51,14 @@ class XpuCommunicator(DeviceCommunicatorBase):
             unique_name: Unique identifier for this communicator
         """
         super().__init__(cpu_group, device, device_group, unique_name)
-        
+
         # Verify we're on XPU device
         if device is not None and device.type != "xpu":
             logger.warning(
                 f"XpuCommunicator initialized with non-XPU device: {device}. "
                 "This may cause unexpected behavior."
             )
-        
+
         # Check if XCCL backend is available
         if device_group is not None:
             backend = dist.get_backend(device_group)
@@ -77,38 +77,37 @@ class XpuCommunicator(DeviceCommunicatorBase):
     ) -> torch.Tensor:
         """
         Perform all-reduce operation on XPU.
-        
+
         Args:
             input_: Input tensor to reduce
             op: Reduction operation (default: SUM)
-            
+
         Returns:
             Reduced tensor (in-place operation)
         """
         if op is None:
             op = ReduceOp.SUM
-            
+
         # Verify tensor is on XPU device
-        assert input_.device.type == "xpu", (
-            f"Input tensor must be on XPU device, got: {input_.device}"
-        )
-        
+        assert (
+            input_.device.type == "xpu"
+        ), f"Input tensor must be on XPU device, got: {input_.device}"
+
         # Perform all-reduce using device group
         dist.all_reduce(input_, op=op, group=self.device_group)
         return input_
 
-
     def send(self, tensor: torch.Tensor, dst: int | None = None) -> None:
         """
         Send tensor to destination rank (point-to-point communication).
-        
+
         Args:
             tensor: Tensor to send
             dst: Destination rank (local rank, defaults to next rank)
         """
         if dst is None:
             dst = (self.rank_in_group + 1) % self.world_size
-        
+
         dist.send(tensor, dst=self.ranks[dst], group=self.device_group)
 
     def recv(
@@ -116,18 +115,18 @@ class XpuCommunicator(DeviceCommunicatorBase):
     ) -> torch.Tensor:
         """
         Receive tensor from source rank (point-to-point communication).
-        
+
         Args:
             size: Shape of tensor to receive
             dtype: Data type of tensor to receive
             src: Source rank (local rank, defaults to previous rank)
-            
+
         Returns:
             Received tensor
         """
         if src is None:
             src = (self.rank_in_group - 1) % self.world_size
-        
+
         tensor = torch.empty(size, dtype=dtype, device=self.device)
         dist.recv(tensor, src=self.ranks[src], group=self.device_group)
         return tensor
@@ -137,22 +136,22 @@ class XpuCommunicator(DeviceCommunicatorBase):
     ) -> torch.Tensor:
         """
         Perform all-to-all operation on 4D tensors for XPU.
-        
+
         This implementation uses torch.distributed._functional_collectives.all_to_all_single
         instead of torch.distributed.all_to_all_single because the latter has a known bug
         on Intel XPU with XCCL backend that causes data corruption.
-        
+
         This operation is used for redistributing attention heads and sequence dimensions
         in distributed attention computation (e.g., Ulysses attention).
-        
+
         Args:
             input_: 4D input tensor [B, S, H, D] or similar
             scatter_dim: Dimension to scatter (default: 2, heads)
             gather_dim: Dimension to gather (default: 1, sequence)
-            
+
         Returns:
             Redistributed tensor
-            
+
         Supported modes:
         - scatter_dim=2, gather_dim=1: Redistribute heads, used for forward pass
           [B, shard_S, H, D] -> [B, S, shard_H, D]
@@ -162,9 +161,9 @@ class XpuCommunicator(DeviceCommunicatorBase):
         if self.world_size == 1:
             return input_
 
-        assert input_.dim() == 4, (
-            f"input must be 4D tensor, got {input_.dim()} with shape {input_.shape}"
-        )
+        assert (
+            input_.dim() == 4
+        ), f"input must be 4D tensor, got {input_.dim()} with shape {input_.shape}"
 
         if scatter_dim == 2 and gather_dim == 1:
             # Forward pass: scatter heads, gather sequence
@@ -174,7 +173,7 @@ class XpuCommunicator(DeviceCommunicatorBase):
 
             # Transpose to [H, shard_seqlen, B, D] for all-to-all
             input_t = input_.transpose(0, 2).contiguous()
-            
+
             # Use ft_c.all_to_all_single instead of dist.all_to_all_single
             # to avoid XCCL data corruption bug
             input_shape = input_t.shape
@@ -182,14 +181,14 @@ class XpuCommunicator(DeviceCommunicatorBase):
                 input_t.flatten(),
                 output_split_sizes=None,
                 input_split_sizes=None,
-                group=self.device_group
+                group=self.device_group,
             )
             output = self._maybe_wait(output)
             output = output.reshape(input_shape)
 
             # Split and concatenate: [H, shard_seqlen, B, D] -> [shard_H, seqlen, B, D]
             output = torch.cat(output.split(shard_hn), dim=1)
-            
+
             # Transpose back to [B, seqlen, shard_H, D]
             output = output.transpose(0, 2).contiguous()
 
@@ -218,7 +217,7 @@ class XpuCommunicator(DeviceCommunicatorBase):
                 input_t.flatten(),
                 output_split_sizes=None,
                 input_split_sizes=None,
-                group=self.device_group
+                group=self.device_group,
             )
             output = self._maybe_wait(output)
             output = output.reshape(input_shape)

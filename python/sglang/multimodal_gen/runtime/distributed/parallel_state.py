@@ -233,7 +233,9 @@ def init_distributed_environment(
         elif not current_platform.is_cuda_alike():
             # Use gloo backend for non-CUDA platforms (MPS, CPU)
             backend = "gloo"
-            logger.info("Using gloo backend for %s platform", current_platform.device_name)
+            logger.info(
+                "Using gloo backend for %s platform", current_platform.device_name
+            )
 
     logger.debug(
         "world_size=%d rank=%d local_rank=%d "

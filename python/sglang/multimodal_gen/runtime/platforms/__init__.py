@@ -114,9 +114,7 @@ def xpu_platform_plugin() -> str | None:
     except Exception as e:
         logger.info("Intel XPU platform is unavailable: %s", e)
 
-    return (
-        "sglang.multimodal_gen.runtime.platforms.xpu.XpuPlatform" if is_xpu else None
-    )
+    return "sglang.multimodal_gen.runtime.platforms.xpu.XpuPlatform" if is_xpu else None
 
 
 def npu_platform_plugin() -> str | None:
@@ -135,6 +133,8 @@ def npu_platform_plugin() -> str | None:
         if is_npu
         else None
     )
+
+
 def musa_platform_plugin() -> str | None:
     is_musa = False
 

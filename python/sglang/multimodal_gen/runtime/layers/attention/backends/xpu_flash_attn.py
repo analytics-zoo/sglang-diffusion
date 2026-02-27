@@ -89,18 +89,19 @@ def _flash_attn_varlen_func(
     be constructed automatically.
     """
     if softmax_scale is None:
-        softmax_scale = (
-            q.shape[-1] + (qv.shape[-1] if qv is not None else 0)
-        ) ** (-0.5)
+        softmax_scale = (q.shape[-1] + (qv.shape[-1] if qv is not None else 0)) ** (
+            -0.5
+        )
 
     # --- handle dense (batch, seqlen, heads, hdim) layout ----------------
     is_dense = cu_seqlens_q is None
     if is_dense:
         assert q.dim() == 4, "expected (batch, seq_len, heads, head_dim)"
         batch_size, seqlen_q = q.shape[0], q.shape[1]
-        cu_seqlens_q = torch.arange(
-            0, batch_size + 1, dtype=torch.int32, device=q.device
-        ) * seqlen_q
+        cu_seqlens_q = (
+            torch.arange(0, batch_size + 1, dtype=torch.int32, device=q.device)
+            * seqlen_q
+        )
         max_seqlen_q = seqlen_q
         # q must be (total_q, heads, head_dim) for the varlen kernel
         q = q.reshape(-1, q.shape[-2], q.shape[-1]).contiguous()
@@ -135,33 +136,33 @@ def _flash_attn_varlen_func(
 
     # Call 27-arg fwd op  --------------------------------------------------
     out, softmax_lse, *rest = torch.ops.sgl_kernel.fwd.default(
-        q,                  # 1  Tensor!  q
-        k,                  # 2  Tensor   k
-        v,                  # 3  Tensor   v
-        qv,                 # 4  Tensor?  q_v
-        cu_seqlens_q,       # 5  Tensor   cu_seqlens_q
-        cu_seqlens_k,       # 6  Tensor   cu_seqlens_k
-        max_seqlen_q,       # 7  int      max_seqlen_q
-        page_table,         # 8  Tensor   page_table
-        None,               # 9  Tensor?  kv_batch_idx
-        None,               # 10 Tensor?  leftpad_k
-        None,               # 11 Tensor?  rotary_cos
-        None,               # 12 Tensor?  rotary_sin
-        None,               # 13 Tensor?  seqlens_rotary
-        q_descale,          # 14 Tensor?  q_descale
-        k_descale,          # 15 Tensor?  k_descale
-        v_descale,          # 16 Tensor?  v_descale
-        softmax_scale,      # 17 float    softmax_scale
-        None,               # 18 Tensor?  sinks
-        causal,             # 19 bool     is_causal
-        window_size[0],     # 20 int      window_size_left
-        window_size[1],     # 21 int      window_size_right
-        softcap,            # 22 float    softcap
-        False,              # 23 bool     is_rotary_interleaved
-        None,               # 24 Tensor?  scheduler_metadata
-        num_splits,         # 25 int      num_splits
-        pack_gqa,           # 26 bool?    pack_gqa
-        sm_margin,          # 27 int      sm_margin
+        q,  # 1  Tensor!  q
+        k,  # 2  Tensor   k
+        v,  # 3  Tensor   v
+        qv,  # 4  Tensor?  q_v
+        cu_seqlens_q,  # 5  Tensor   cu_seqlens_q
+        cu_seqlens_k,  # 6  Tensor   cu_seqlens_k
+        max_seqlen_q,  # 7  int      max_seqlen_q
+        page_table,  # 8  Tensor   page_table
+        None,  # 9  Tensor?  kv_batch_idx
+        None,  # 10 Tensor?  leftpad_k
+        None,  # 11 Tensor?  rotary_cos
+        None,  # 12 Tensor?  rotary_sin
+        None,  # 13 Tensor?  seqlens_rotary
+        q_descale,  # 14 Tensor?  q_descale
+        k_descale,  # 15 Tensor?  k_descale
+        v_descale,  # 16 Tensor?  v_descale
+        softmax_scale,  # 17 float    softmax_scale
+        None,  # 18 Tensor?  sinks
+        causal,  # 19 bool     is_causal
+        window_size[0],  # 20 int      window_size_left
+        window_size[1],  # 21 int      window_size_right
+        softcap,  # 22 float    softcap
+        False,  # 23 bool     is_rotary_interleaved
+        None,  # 24 Tensor?  scheduler_metadata
+        num_splits,  # 25 int      num_splits
+        pack_gqa,  # 26 bool?    pack_gqa
+        sm_margin,  # 27 int      sm_margin
     )
 
     # Reshape back to dense layout if input was dense

@@ -254,8 +254,13 @@ class CLIPAttention(nn.Module):
                     seq_len = query_states.shape[2]
                     # Create causal mask: [1, 1, S, S]
                     causal_mask = torch.triu(
-                        torch.ones(seq_len, seq_len, dtype=torch.bool, device=query_states.device),
-                        diagonal=1
+                        torch.ones(
+                            seq_len,
+                            seq_len,
+                            dtype=torch.bool,
+                            device=query_states.device,
+                        ),
+                        diagonal=1,
                     )
                     causal_mask = causal_mask[None, None, :, :].expand(
                         query_states.shape[0], 1, -1, -1
@@ -271,7 +276,9 @@ class CLIPAttention(nn.Module):
                     else:
                         attn_mask = attention_mask
                     # Combine causal mask with attention mask
-                    attn_mask = attn_mask.masked_fill(causal_mask, torch.finfo(query_states.dtype).min)
+                    attn_mask = attn_mask.masked_fill(
+                        causal_mask, torch.finfo(query_states.dtype).min
+                    )
                     attn_output = torch.nn.functional.scaled_dot_product_attention(
                         query_states,
                         key_states,
