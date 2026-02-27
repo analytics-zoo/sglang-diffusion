@@ -277,9 +277,7 @@ class Platform:
 
     @lru_cache(maxsize=1)
     def get_torch_distributed_backend_str(self) -> str:
-        if self.is_xpu():
-            return "xccl"
-        elif self.is_cuda_alike():
+        if self.is_cuda_alike():
             return "nccl"
         elif self.is_npu():
             return "hccl"
@@ -287,6 +285,8 @@ class Platform:
             return "mccl"
         elif self.is_mps():
             return "gloo"
+        elif self.is_xpu():
+            return "xccl"
         else:
             raise NotImplementedError(
                 "No Accelerators(AMD/NV/MTT GPU, AMD MI instinct accelerators) available"

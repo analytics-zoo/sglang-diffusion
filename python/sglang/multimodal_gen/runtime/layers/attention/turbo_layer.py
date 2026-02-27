@@ -38,14 +38,6 @@ def _is_xpu_platform() -> bool:
     return hasattr(torch, 'xpu') and torch.xpu.is_available()
 
 
-def _get_device_stream_context():
-    """Get the appropriate stream context for XPU or CUDA."""
-    if _is_xpu_platform():
-        return torch.xpu.Stream(), torch.xpu.stream, torch.xpu.current_stream
-    else:
-        return torch.cuda.Stream(), torch.cuda.stream, torch.cuda.current_stream
-
-
 def _maybe_wait(tensor: torch.Tensor) -> torch.Tensor:
     """Wait for async tensor if needed (for functional collectives)."""
     if isinstance(tensor, ft_c.AsyncCollectiveTensor):

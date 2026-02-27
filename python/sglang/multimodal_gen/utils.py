@@ -77,13 +77,7 @@ def find_nccl_library() -> str:
 
 
 # Platform-aware stream management
-# Check if XPU is available and set up appropriate stream patching
-_is_xpu_available = hasattr(torch, "xpu") and torch.xpu.is_available()
-
-if _is_xpu_available:
-    prev_set_stream = torch.xpu.set_stream
-else:
-    prev_set_stream = torch.cuda.set_stream
+prev_set_stream = torch.get_device_module().set_stream
 
 _current_stream = None
 
@@ -94,11 +88,7 @@ def _patched_set_stream(stream) -> None:
     if stream is not None:
         prev_set_stream(stream)
 
-
-if _is_xpu_available:
-    torch.xpu.set_stream = _patched_set_stream
-else:
-    torch.cuda.set_stream = _patched_set_stream
+torch.get_device_module().set_stream = _patched_set_stream
 
 
 def current_stream():
@@ -122,13 +112,13 @@ def current_stream():
     if _current_stream is None:
         # when this function is called before any stream is set,
         # we return the default stream.
-        if current_platform.is_xpu():
-            _current_stream = torch.xpu.Stream()
-        elif current_platform.is_rocm():
+        if current_platform.is_rocm():
             # On ROCm using the default 0 stream in combination with RCCL
             # is hurting performance. Therefore creating a dedicated stream
             # per process
             _current_stream = torch.cuda.Stream()
+        elif current_platform.is_xpu():
+            _current_stream = torch.xpu.Stream()
         else:
             _current_stream = torch.cuda.current_stream()
     return _current_stream
