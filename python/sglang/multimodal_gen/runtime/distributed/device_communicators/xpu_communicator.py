@@ -97,99 +97,6 @@ class XpuCommunicator(DeviceCommunicatorBase):
         dist.all_reduce(input_, op=op, group=self.device_group)
         return input_
 
-    def all_gather(self, input_: torch.Tensor, dim: int = -1) -> torch.Tensor:
-        """
-        Perform all-gather operation on XPU.
-        
-        Args:
-            input_: Input tensor to gather
-            dim: Dimension along which to concatenate gathered tensors
-            
-        Returns:
-            Concatenated tensor from all ranks
-        """
-        assert -input_.dim() <= dim < input_.dim(), (
-            f"Invalid dim ({dim}) for input tensor with shape {input_.size()}"
-        )
-        if dim < 0:
-            # Convert negative dim to positive
-            dim += input_.dim()
-        
-        input_size = input_.size()
-        
-        # Allocate output tensor
-        output_tensor = torch.empty(
-            (self.world_size,) + input_size, 
-            dtype=input_.dtype, 
-            device=input_.device
-        )
-        
-        # All-gather into tensor
-        dist.all_gather_into_tensor(output_tensor, input_, group=self.device_group)
-        
-        # Reshape to concatenate along specified dimension
-        output_tensor = output_tensor.movedim(0, dim)
-        output_tensor = output_tensor.reshape(
-            input_size[:dim]
-            + (self.world_size * input_size[dim],)
-            + input_size[dim + 1:]
-        )
-        
-        return output_tensor
-
-    def gather(
-        self, input_: torch.Tensor, dst: int = 0, dim: int = -1
-    ) -> torch.Tensor | None:
-        """
-        Gather tensors from all ranks to a destination rank.
-        
-        Args:
-            input_: Input tensor to gather
-            dst: Destination rank (local rank within group)
-            dim: Dimension along which to concatenate
-            
-        Returns:
-            Gathered tensor at destination rank, None at other ranks
-        """
-        assert -input_.dim() <= dim < input_.dim(), (
-            f"Invalid dim ({dim}) for input tensor with shape {input_.size()}"
-        )
-        if dim < 0:
-            dim += input_.dim()
-        
-        # XPU gather implementation using all_gather
-        # (similar to vLLM's approach due to potential issues with direct gather)
-        input_size = input_.size()
-        output_tensor = torch.empty(
-            (self.world_size,) + input_size,
-            dtype=input_.dtype,
-            device=input_.device
-        )
-        
-        # All-gather
-        dist.all_gather_into_tensor(output_tensor, input_, group=self.device_group)
-        
-        if self.rank_in_group == dst:
-            # Reshape and return at destination
-            output_tensor = output_tensor.movedim(0, dim)
-            output_tensor = output_tensor.reshape(
-                input_size[:dim]
-                + (self.world_size * input_size[dim],)
-                + input_size[dim + 1:]
-            )
-            return output_tensor
-        else:
-            return None
-
-    def broadcast(self, input_: torch.Tensor, src: int = 0) -> None:
-        """
-        Broadcast tensor from source rank to all ranks.
-        
-        Args:
-            input_: Tensor to broadcast (modified in-place)
-            src: Source rank (local rank within group)
-        """
-        dist.broadcast(input_, src=self.ranks[src], group=self.device_group)
 
     def send(self, tensor: torch.Tensor, dst: int | None = None) -> None:
         """
@@ -223,37 +130,6 @@ class XpuCommunicator(DeviceCommunicatorBase):
         
         tensor = torch.empty(size, dtype=dtype, device=self.device)
         dist.recv(tensor, src=self.ranks[src], group=self.device_group)
-        return tensor
-
-    def barrier(self) -> None:
-        """
-        Synchronization barrier across all ranks.
-        """
-        dist.barrier(group=self.device_group)
-
-    def destroy(self) -> None:
-        """
-        Cleanup communicator resources.
-        
-        Note: For XPU with PyTorch distributed, cleanup is handled
-        automatically by PyTorch's process group management.
-        """
-        logger.info(
-            f"XpuCommunicator destroyed for rank {self.rank} "
-            f"(unique_name: {self.unique_name})"
-        )
-        # No explicit cleanup needed for PyTorch XCCL backend
-        pass
-
-    def _maybe_wait(self, tensor: torch.Tensor) -> torch.Tensor:
-        """
-        Wait for async tensor if needed.
-        
-        When using functional collectives, the result may be an AsyncCollectiveTensor.
-        This method waits for the operation to complete.
-        """
-        if isinstance(tensor, ft_c.AsyncCollectiveTensor):
-            return tensor.wait()
         return tensor
 
     def all_to_all_4D(
