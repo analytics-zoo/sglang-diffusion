@@ -201,9 +201,9 @@ class XpuPlatform(Platform):
                 torch.xpu.manual_seed_all(seed)
 
     # Backend class paths
-    _XPU_FLASH_ATTN_CLS = (
+    _INTEL_XPU_CLS = (
         "sglang.multimodal_gen.runtime.layers.attention.backends"
-        ".xpu_flash_attn.XpuFlashAttentionBackend"
+        ".intel_xpu.XpuFlashAttentionBackend"
     )
     _SDPA_BACKEND_CLS = (
         "sglang.multimodal_gen.runtime.layers.attention.backends.sdpa.SDPABackend"
@@ -234,7 +234,7 @@ class XpuPlatform(Platform):
         # Non-XPU/SDPA backends are not supported on XPU
         if (
             selected_backend is not None
-            and selected_backend != AttentionBackendEnum.XPU_FLASH_ATTN
+            and selected_backend != AttentionBackendEnum.INTEL_XPU
         ):
             logger.warning(
                 f"{selected_backend.name} is not supported on XPU. "
@@ -245,7 +245,7 @@ class XpuPlatform(Platform):
             "Using XPU flash-attention backend "
             "(sgl-kernel cutlass flash attention with SDPA fallback)."
         )
-        return cls._XPU_FLASH_ATTN_CLS
+        return cls._INTEL_XPU_CLS
 
     @classmethod
     def get_device_communicator_cls(cls) -> str:

@@ -186,7 +186,7 @@ class XpuFlashAttentionBackend(AttentionBackend):
 
     @staticmethod
     def get_enum() -> AttentionBackendEnum:
-        return AttentionBackendEnum.XPU_FLASH_ATTN
+        return AttentionBackendEnum.INTEL_XPU
 
     @staticmethod
     def get_impl_cls() -> type[XpuFlashAttentionImpl]:
