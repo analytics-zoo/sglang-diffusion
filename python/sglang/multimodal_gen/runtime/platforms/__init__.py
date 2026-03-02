@@ -101,6 +101,22 @@ def rocm_platform_plugin() -> str | None:
     )
 
 
+def xpu_platform_plugin() -> str | None:
+    """Detect if Intel XPU (GPU) is available."""
+    is_xpu = False
+
+    try:
+        import torch
+
+        if hasattr(torch, "xpu") and torch.xpu.is_available():
+            is_xpu = True
+            logger.info("Intel XPU platform is available")
+    except Exception as e:
+        logger.info("Intel XPU platform is unavailable: %s", e)
+
+    return "sglang.multimodal_gen.runtime.platforms.xpu.XpuPlatform" if is_xpu else None
+
+
 def npu_platform_plugin() -> str | None:
     is_npu = False
 
@@ -145,6 +161,7 @@ builtin_platform_plugins = {
     "cpu": cpu_platform_plugin,
     "npu": npu_platform_plugin,
     "musa": musa_platform_plugin,
+    "xpu": xpu_platform_plugin,
 }
 
 
@@ -154,6 +171,11 @@ def resolve_current_platform_cls_qualname() -> str:
 
     # Try MPS first on macOS
     platform_cls_qualname = mps_platform_plugin()
+    if platform_cls_qualname is not None:
+        return platform_cls_qualname
+
+    # Try Intel XPU
+    platform_cls_qualname = xpu_platform_plugin()
     if platform_cls_qualname is not None:
         return platform_cls_qualname
 

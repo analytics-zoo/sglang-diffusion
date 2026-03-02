@@ -14,7 +14,8 @@ from sglang.multimodal_gen.runtime.platforms import current_platform
 
 _is_cuda = current_platform.is_cuda()
 _is_npu = current_platform.is_npu()
-if _is_cuda:
+_is_xpu = current_platform.is_xpu()
+if _is_cuda or _is_xpu:
     from sgl_kernel import fused_add_rmsnorm, rmsnorm
 
 if _is_npu:
@@ -144,6 +145,38 @@ class RMSNorm(CustomOp):
         residual: Optional[torch.Tensor] = None,
     ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         return self.forward_native(x, residual)
+
+    def forward_xpu(
+        self,
+        x: torch.Tensor,
+        residual: Optional[torch.Tensor] = None,
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        """XPU-specific implementation of RMSNorm.
+
+        Uses sgl_kernel if available, otherwise falls back to native implementation.
+        """
+        shape = x.shape
+        x = x.contiguous()
+        x = x.view(-1, shape[-1])
+        if x.dtype == torch.float or self.variance_size_override is not None:
+            return self.forward_native(x.view(shape), residual)
+        if residual is not None:
+            try:
+                fused_add_rmsnorm(
+                    x,
+                    residual.view(-1, shape[-1]),
+                    self.weight.data,
+                    self.variance_epsilon,
+                )
+                return x.view(shape), residual
+            except Exception:
+                return self.forward_native(x.view(shape), residual)
+        try:
+            out = rmsnorm(x, self.weight.data, self.variance_epsilon)
+            out = out.view(shape)
+            return out
+        except Exception:
+            return self.forward_native(x.view(shape), residual)
 
     def forward_npu(
         self,
@@ -519,9 +552,16 @@ def tensor_parallel_rms_norm(x: torch.Tensor, norm: "RMSNorm") -> torch.Tensor:
     weight = norm.weight.tensor_split(tp_size)[tp_rank].float()
     x_fp32 = x.float()
     variance = x_fp32.pow(2).mean(dim=-1, keepdim=True)
-    variance = get_tp_group().all_reduce(
-        variance, op=torch._C._distributed_c10d.ReduceOp.AVG
-    )
+    # Use SUM + divide instead of AVG on XPU, because XCCL in torch 2.9+xpu have issues for AVG
+    if current_platform.is_xpu():
+        variance = get_tp_group().all_reduce(
+            variance, op=torch._C._distributed_c10d.ReduceOp.SUM
+        )
+        variance = variance / tp_size
+    else:
+        variance = get_tp_group().all_reduce(
+            variance, op=torch._C._distributed_c10d.ReduceOp.AVG
+        )
     output = x_fp32 * torch.rsqrt(variance + norm.variance_epsilon) * weight
     return output.to(dtype=src_dtype)
 

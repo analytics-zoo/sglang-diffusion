@@ -36,6 +36,7 @@ class AttentionBackendEnum(enum.Enum):
     AITER = enum.auto()
     SLA_ATTN = enum.auto()
     SAGE_SLA_ATTN = enum.auto()
+    INTEL_XPU = enum.auto()
     NO_ATTENTION = enum.auto()
 
     def __str__(self):
@@ -61,6 +62,7 @@ class PlatformEnum(enum.Enum):
     MPS = enum.auto()
     NPU = enum.auto()
     MUSA = enum.auto()
+    XPU = enum.auto()  # Intel XPU (GPU) support
     OOT = enum.auto()
     UNSPECIFIED = enum.auto()
 
@@ -262,6 +264,8 @@ class Platform:
     def get_device(self, local_rank: int) -> torch.device:
         if self.is_cuda() or self.is_rocm():
             return torch.device("cuda", local_rank)
+        elif self.is_xpu():
+            return torch.device("xpu", local_rank)
         elif self.is_npu():
             return torch.device("npu", local_rank)
         elif self.is_musa():
@@ -281,6 +285,8 @@ class Platform:
             return "mccl"
         elif self.is_mps():
             return "gloo"
+        elif self.is_xpu():
+            return "xccl"
         else:
             raise NotImplementedError(
                 "No Accelerators(AMD/NV/MTT GPU, AMD MI instinct accelerators) available"

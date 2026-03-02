@@ -1,0 +1,234 @@
+# SPDX-License-Identifier: Apache-2.0
+"""
+Intel XPU Communicator for SGLang Diffusion.
+
+This module provides distributed communication support for Intel XPU devices
+using PyTorch's built-in distributed communication primitives with XCCL backend.
+
+IMPORTANT: This module uses torch.distributed._functional_collectives.all_to_all_single
+instead of torch.distributed.all_to_all_single for the all_to_all_4D operation.
+This is because torch.distributed.all_to_all_single has a known bug on Intel XPU
+with XCCL backend that causes data corruption. See XCCL_AllToAll_Bug_Report.md
+for more details.
+"""
+
+import torch
+import torch.distributed as dist
+import torch.distributed._functional_collectives as ft_c
+from torch.distributed import ProcessGroup, ReduceOp
+
+from sglang.multimodal_gen.runtime.distributed.device_communicators.base_device_communicator import (
+    DeviceCommunicatorBase,
+)
+from sglang.multimodal_gen.runtime.utils.logging_utils import init_logger
+
+logger = init_logger(__name__)
+
+
+class XpuCommunicator(DeviceCommunicatorBase):
+    """
+    Communicator for Intel XPU devices using oneCCL backend.
+
+    Intel XPU uses the XCCL (Collective Communications Library) backend through
+    PyTorch's distributed communication interface. Unlike NVIDIA NCCL, XCCL
+    is directly integrated into PyTorch for XPU devices.
+    """
+
+    def __init__(
+        self,
+        cpu_group: ProcessGroup,
+        device: torch.device | None = None,
+        device_group: ProcessGroup | None = None,
+        unique_name: str = "",
+    ):
+        """
+        Initialize XPU communicator.
+
+        Args:
+            cpu_group: CPU process group for control-plane communication
+            device: XPU device (e.g., torch.device('xpu:0'))
+            device_group: XPU process group for data-plane communication
+            unique_name: Unique identifier for this communicator
+        """
+        super().__init__(cpu_group, device, device_group, unique_name)
+
+        # Verify we're on XPU device
+        if device is not None and device.type != "xpu":
+            logger.warning(
+                f"XpuCommunicator initialized with non-XPU device: {device}. "
+                "This may cause unexpected behavior."
+            )
+
+        # Check if XCCL backend is available
+        if device_group is not None:
+            backend = dist.get_backend(device_group)
+            logger.info(
+                f"XpuCommunicator initialized with backend: {backend}, "
+                f"world_size: {self.world_size}, rank: {self.rank}"
+            )
+            if backend not in ["xccl", "gloo"]:
+                logger.warning(
+                    f"Expected 'xccl' or 'gloo' backend for XPU, got: {backend}. "
+                    "Communication may not work as expected."
+                )
+
+    def all_reduce(
+        self, input_: torch.Tensor, op: ReduceOp | None = None
+    ) -> torch.Tensor:
+        """
+        Perform all-reduce operation on XPU.
+
+        Args:
+            input_: Input tensor to reduce
+            op: Reduction operation (default: SUM)
+
+        Returns:
+            Reduced tensor (in-place operation)
+        """
+        if op is None:
+            op = ReduceOp.SUM
+
+        # Verify tensor is on XPU device
+        assert (
+            input_.device.type == "xpu"
+        ), f"Input tensor must be on XPU device, got: {input_.device}"
+
+        # Perform all-reduce using device group
+        dist.all_reduce(input_, op=op, group=self.device_group)
+        return input_
+
+    def send(self, tensor: torch.Tensor, dst: int | None = None) -> None:
+        """
+        Send tensor to destination rank (point-to-point communication).
+
+        Args:
+            tensor: Tensor to send
+            dst: Destination rank (local rank, defaults to next rank)
+        """
+        if dst is None:
+            dst = (self.rank_in_group + 1) % self.world_size
+
+        dist.send(tensor, dst=self.ranks[dst], group=self.device_group)
+
+    def recv(
+        self, size: torch.Size, dtype: torch.dtype, src: int | None = None
+    ) -> torch.Tensor:
+        """
+        Receive tensor from source rank (point-to-point communication).
+
+        Args:
+            size: Shape of tensor to receive
+            dtype: Data type of tensor to receive
+            src: Source rank (local rank, defaults to previous rank)
+
+        Returns:
+            Received tensor
+        """
+        if src is None:
+            src = (self.rank_in_group - 1) % self.world_size
+
+        tensor = torch.empty(size, dtype=dtype, device=self.device)
+        dist.recv(tensor, src=self.ranks[src], group=self.device_group)
+        return tensor
+
+    def all_to_all_4D(
+        self, input_: torch.Tensor, scatter_dim: int = 2, gather_dim: int = 1
+    ) -> torch.Tensor:
+        """
+        Perform all-to-all operation on 4D tensors for XPU.
+
+        This implementation uses torch.distributed._functional_collectives.all_to_all_single
+        instead of torch.distributed.all_to_all_single because the latter has a known bug
+        on Intel XPU with XCCL backend that causes data corruption.
+
+        This operation is used for redistributing attention heads and sequence dimensions
+        in distributed attention computation (e.g., Ulysses attention).
+
+        Args:
+            input_: 4D input tensor [B, S, H, D] or similar
+            scatter_dim: Dimension to scatter (default: 2, heads)
+            gather_dim: Dimension to gather (default: 1, sequence)
+
+        Returns:
+            Redistributed tensor
+
+        Supported modes:
+        - scatter_dim=2, gather_dim=1: Redistribute heads, used for forward pass
+          [B, shard_S, H, D] -> [B, S, shard_H, D]
+        - scatter_dim=1, gather_dim=2: Redistribute sequence, used for backward pass
+          [B, S, shard_H, D] -> [B, shard_S, H, D]
+        """
+        if self.world_size == 1:
+            return input_
+
+        assert (
+            input_.dim() == 4
+        ), f"input must be 4D tensor, got {input_.dim()} with shape {input_.shape}"
+
+        if scatter_dim == 2 and gather_dim == 1:
+            # Forward pass: scatter heads, gather sequence
+            # [B, shard_seqlen, H, D] -> [B, seqlen, shard_H, D]
+            bs, shard_seqlen, hn, hd = input_.shape
+            shard_hn = hn // self.world_size
+
+            # Transpose to [H, shard_seqlen, B, D] for all-to-all
+            input_t = input_.transpose(0, 2).contiguous()
+
+            # Use ft_c.all_to_all_single instead of dist.all_to_all_single
+            # to avoid XCCL data corruption bug
+            input_shape = input_t.shape
+            output = ft_c.all_to_all_single(
+                input_t.flatten(),
+                output_split_sizes=None,
+                input_split_sizes=None,
+                group=self.device_group,
+            )
+            output = self._maybe_wait(output)
+            output = output.reshape(input_shape)
+
+            # Split and concatenate: [H, shard_seqlen, B, D] -> [shard_H, seqlen, B, D]
+            output = torch.cat(output.split(shard_hn), dim=1)
+
+            # Transpose back to [B, seqlen, shard_H, D]
+            output = output.transpose(0, 2).contiguous()
+
+            return output
+
+        elif scatter_dim == 1 and gather_dim == 2:
+            # Backward pass: scatter sequence, gather heads
+            # [B, seqlen, shard_H, D] -> [B, shard_seqlen, H, D]
+            bs, seqlen, shard_hn, hd = input_.shape
+            shard_seqlen = seqlen // self.world_size
+
+            # Transpose to [shard_H, seqlen, B, D]
+            input_t = input_.transpose(0, 2).contiguous()
+
+            # Reshape for all-to-all: [shard_H * world_size, shard_seqlen, B, D]
+            input_t = (
+                input_t.reshape(shard_hn, self.world_size, shard_seqlen, bs, hd)
+                .transpose(0, 1)
+                .reshape(shard_hn * self.world_size, shard_seqlen, bs, hd)
+                .contiguous()
+            )
+
+            # Use ft_c.all_to_all_single instead of dist.all_to_all_single
+            input_shape = input_t.shape
+            output = ft_c.all_to_all_single(
+                input_t.flatten(),
+                output_split_sizes=None,
+                input_split_sizes=None,
+                group=self.device_group,
+            )
+            output = self._maybe_wait(output)
+            output = output.reshape(input_shape)
+
+            # Transpose back to [B, shard_seqlen, H, D]
+            output = output.transpose(0, 2).contiguous()
+
+            return output
+
+        else:
+            raise RuntimeError(
+                f"Invalid scatter_dim={scatter_dim}, gather_dim={gather_dim}. "
+                f"Only (scatter_dim=2, gather_dim=1) and (scatter_dim=1, gather_dim=2) are supported."
+            )

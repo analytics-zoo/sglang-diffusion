@@ -11,7 +11,6 @@ import inspect
 import math
 import os
 import signal
-import socket
 import sys
 import threading
 import traceback
@@ -23,7 +22,6 @@ from typing import Any, TypeVar, cast
 import cloudpickle
 import torch
 import yaml
-from remote_pdb import RemotePdb
 from torch.distributed.fsdp import MixedPrecisionPolicy
 
 import sglang.multimodal_gen.envs as envs
@@ -76,22 +74,23 @@ def find_nccl_library() -> str:
     return str(so_file)
 
 
-prev_set_stream = torch.cuda.set_stream
+# Platform-aware stream management
+prev_set_stream = torch.get_device_module().set_stream
 
 _current_stream = None
 
 
-def _patched_set_stream(stream: torch.cuda.Stream | None) -> None:
+def _patched_set_stream(stream) -> None:
     global _current_stream
     _current_stream = stream
     if stream is not None:
         prev_set_stream(stream)
 
 
-torch.cuda.set_stream = _patched_set_stream
+torch.get_device_module().set_stream = _patched_set_stream
 
 
-def current_stream() -> torch.cuda.Stream | None:
+def current_stream():
     """
     replace `torch.cuda.current_stream()` with `sglang.multimodal_gen.utils.current_stream()`.
     it turns out that `torch.cuda.current_stream()` is quite expensive,
@@ -104,7 +103,7 @@ def current_stream() -> torch.cuda.Stream | None:
     """
     from sglang.multimodal_gen.runtime.platforms import current_platform
 
-    # For non-CUDA platforms, return None
+    # For non-CUDA-alike platforms, return None
     if not current_platform.is_cuda_alike():
         return None
 
@@ -112,14 +111,15 @@ def current_stream() -> torch.cuda.Stream | None:
     if _current_stream is None:
         # when this function is called before any stream is set,
         # we return the default stream.
-        # On ROCm using the default 0 stream in combination with RCCL
-        # is hurting performance. Therefore creating a dedicated stream
-        # per process
-        _current_stream = (
-            torch.cuda.Stream()
-            if current_platform.is_rocm()
-            else torch.cuda.current_stream()
-        )
+        if current_platform.is_rocm():
+            # On ROCm using the default 0 stream in combination with RCCL
+            # is hurting performance. Therefore creating a dedicated stream
+            # per process
+            _current_stream = torch.cuda.Stream()
+        elif current_platform.is_xpu():
+            _current_stream = torch.xpu.Stream()
+        else:
+            _current_stream = torch.cuda.current_stream()
     return _current_stream
 
 
@@ -544,15 +544,6 @@ class TypeBasedDispatcher:
             if isinstance(obj, ty):
                 return fn(obj)
         raise ValueError(f"Invalid object: {obj}")
-
-
-# For non-torch.distributed debugging
-def remote_breakpoint() -> None:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        s.bind(("localhost", 0))  # Let the OS pick an ephemeral port.
-        port = s.getsockname()[1]
-        RemotePdb(host="localhost", port=port).set_trace()
 
 
 @dataclass

@@ -59,6 +59,8 @@ class SGLDiffusionProfiler:
             activities.append(torch.profiler.ProfilerActivity.CUDA)
         if current_platform.is_npu():
             activities.append(torch_npu.profiler.ProfilerActivity.NPU)
+        if hasattr(torch, "xpu") and torch.xpu.is_available():
+            activities.append(torch.profiler.ProfilerActivity.XPU)
 
         common_torch_profiler_args = dict(
             activities=activities,
@@ -129,9 +131,11 @@ class SGLDiffusionProfiler:
         logger.info("Stopping Profiler...")
         if torch.cuda.is_available():
             torch.cuda.synchronize()
-        if current_platform.is_npu():
+        elif current_platform.is_npu():
             torch.npu.synchronize()
             export_trace = False  # set to false because our internal torch_npu.profiler will generate trace file
+        elif hasattr(torch, "xpu") and torch.xpu.is_available():
+            torch.xpu.synchronize()
         self.profiler.stop()
 
         if export_trace:

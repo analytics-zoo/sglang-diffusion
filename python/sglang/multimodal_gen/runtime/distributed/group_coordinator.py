@@ -201,6 +201,20 @@ class GroupCoordinator:
                     device_group=self.device_group,
                     unique_name=self.unique_name,
                 )
+            elif current_platform.is_xpu():
+                # For Intel XPU, use the XPU communicator with XCCL backend
+                # This communicator uses ft_c.all_to_all_single instead of
+                # dist.all_to_all_single to avoid XCCL data corruption bug
+                from sglang.multimodal_gen.runtime.distributed.device_communicators.xpu_communicator import (
+                    XpuCommunicator,
+                )
+
+                self.device_communicator = XpuCommunicator(
+                    cpu_group=self.cpu_group,
+                    device=self.device,
+                    device_group=self.device_group,
+                    unique_name=self.unique_name,
+                )
             else:
                 # For MPS and CPU, use the CPU communicator
                 self.device_communicator = CpuCommunicator(
@@ -294,6 +308,22 @@ class GroupCoordinator:
                 stream.wait_stream(curr_stream)
 
             with torch.cuda.stream(stream):
+                yield graph_capture_context
+        elif current_platform.is_xpu():
+            # XPU stream management
+            if graph_capture_context is None:
+                stream = torch.xpu.Stream()
+                graph_capture_context = GraphCaptureContext(stream)
+            else:
+                stream = graph_capture_context.stream
+
+            # ensure all initialization operations complete before attempting to
+            # capture the graph on another stream
+            curr_stream = torch.xpu.current_stream()
+            if curr_stream != stream:
+                stream.wait_stream(curr_stream)
+
+            with torch.xpu.stream(stream):
                 yield graph_capture_context
         else:
             # For non-CUDA platforms (MPS, CPU), just yield the context without stream management
