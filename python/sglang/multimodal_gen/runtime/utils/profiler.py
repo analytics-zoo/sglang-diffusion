@@ -55,7 +55,9 @@ class SGLDiffusionProfiler:
             pass
 
         activities = [torch.profiler.ProfilerActivity.CPU]
-        if torch.cuda.is_available():
+        if torch.cuda.is_available() or (
+            hasattr(torch, "musa") and torch.musa.is_available()
+        ):
             activities.append(torch.profiler.ProfilerActivity.CUDA)
         if current_platform.is_npu():
             activities.append(torch_npu.profiler.ProfilerActivity.NPU)
@@ -129,7 +131,9 @@ class SGLDiffusionProfiler:
             return
         self.has_stopped = True
         logger.info("Stopping Profiler...")
-        if torch.cuda.is_available():
+        if torch.cuda.is_available() or (
+            hasattr(torch, "musa") and torch.musa.is_available()
+        ):
             torch.cuda.synchronize()
         elif current_platform.is_npu():
             torch.npu.synchronize()
