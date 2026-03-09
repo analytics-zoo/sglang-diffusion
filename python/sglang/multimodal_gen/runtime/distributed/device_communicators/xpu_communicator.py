@@ -1,4 +1,5 @@
-# SPDX-License-Identifier: Apache-2.0
+# Copyright (C) 2026 Intel Corporation, All rights reserved.
+# Licensed under the MIT License (see LICENSE file)
 """
 Intel XPU Communicator for SGLang Diffusion.
 
