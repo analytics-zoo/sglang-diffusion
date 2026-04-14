@@ -231,6 +231,10 @@ def init_distributed_environment(
             extra_args["timeout"] = datetime.timedelta(seconds=timeout)
             logger.info(f"Setting distributed timeout to {timeout} seconds")
 
+        # Set XPU device before init
+        if current_platform.is_xpu():
+            torch.xpu.set_device(local_rank)
+
         torch.distributed.init_process_group(
             backend=backend,
             init_method=distributed_init_method,

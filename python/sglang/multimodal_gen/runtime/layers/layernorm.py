@@ -950,9 +950,15 @@ def tensor_parallel_rms_norm(x: torch.Tensor, norm: "RMSNorm") -> torch.Tensor:
     else:
         variance = x_fp32.pow(2).mean(dim=-1, keepdim=True)
 
-    variance = get_tp_group().all_reduce(
-        variance, op=torch._C._distributed_c10d.ReduceOp.AVG
-    )
+    if current_platform.is_xpu():
+        variance = get_tp_group().all_reduce(
+            variance, op=torch._C._distributed_c10d.ReduceOp.SUM
+        )
+        variance = variance / tp_size
+    else:
+        variance = get_tp_group().all_reduce(
+            variance, op=torch._C._distributed_c10d.ReduceOp.AVG
+        )
 
     if _is_npu:
         output = fused_rsqrt_mul(x_fp32, variance, weight, norm.variance_epsilon)
