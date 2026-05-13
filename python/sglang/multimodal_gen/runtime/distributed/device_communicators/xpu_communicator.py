@@ -73,6 +73,11 @@ class XpuCommunicator(DeviceCommunicatorBase):
                     "Communication may not work as expected."
                 )
 
+    def _maybe_wait(self, tensor: torch.Tensor) -> torch.Tensor:
+        if isinstance(tensor, ft_c.AsyncCollectiveTensor):
+            return tensor.wait()
+        return tensor
+
     def all_reduce(
         self, input_: torch.Tensor, op: ReduceOp | None = None
     ) -> torch.Tensor:
