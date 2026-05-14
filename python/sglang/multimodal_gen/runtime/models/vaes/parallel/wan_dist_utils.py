@@ -134,29 +134,48 @@ def halo_exchange(
     recv_top_buf = _ensure_recv_buf(recv_top_buf, top_row)
     recv_bottom_buf = _ensure_recv_buf(recv_bottom_buf, bottom_row)
 
-    # use batched P2P operations
-    p2p_ops = []
+    if current_platform.is_xpu():
+        # Use individual irecv/isend for XPU/XCCL compatibility
+        reqs = []
 
-    if rank > 0:
-        # has previous neighbor, recv previous rank's data to recv_top_buf and send top_row to it.
-        prev_rank = group_ranks[rank - 1]
-        p2p_ops.append(dist.P2POp(dist.irecv, recv_top_buf, prev_rank, group))
-        p2p_ops.append(dist.P2POp(dist.isend, top_row, prev_rank, group))
-    if rank < world_size - 1:
-        # has next neighbor, send bottom_row to next rank and recv next rank's data to recv_bottom_buf.
-        next_rank = group_ranks[rank + 1]
-        p2p_ops.append(dist.P2POp(dist.isend, bottom_row, next_rank, group))
-        p2p_ops.append(dist.P2POp(dist.irecv, recv_bottom_buf, next_rank, group))
+        if rank > 0:
+            prev_rank = group_ranks[rank - 1]
+            reqs.append(dist.irecv(recv_top_buf, src=prev_rank, group=group))
+            reqs.append(dist.isend(top_row, dst=prev_rank, group=group))
+        if rank < world_size - 1:
+            next_rank = group_ranks[rank + 1]
+            reqs.append(dist.isend(bottom_row, dst=next_rank, group=group))
+            reqs.append(dist.irecv(recv_bottom_buf, src=next_rank, group=group))
 
-    if rank == 0:
-        recv_top_buf.zero_()
-    if rank == world_size - 1:
-        recv_bottom_buf.zero_()
+        if rank == 0:
+            recv_top_buf.zero_()
+        if rank == world_size - 1:
+            recv_bottom_buf.zero_()
 
-    if p2p_ops:
-        reqs = dist.batch_isend_irecv(p2p_ops)
         for req in reqs:
             req.wait()
+    else:
+        # use batched P2P operations
+        p2p_ops = []
+
+        if rank > 0:
+            prev_rank = group_ranks[rank - 1]
+            p2p_ops.append(dist.P2POp(dist.irecv, recv_top_buf, prev_rank, group))
+            p2p_ops.append(dist.P2POp(dist.isend, top_row, prev_rank, group))
+        if rank < world_size - 1:
+            next_rank = group_ranks[rank + 1]
+            p2p_ops.append(dist.P2POp(dist.isend, bottom_row, next_rank, group))
+            p2p_ops.append(dist.P2POp(dist.irecv, recv_bottom_buf, next_rank, group))
+
+        if rank == 0:
+            recv_top_buf.zero_()
+        if rank == world_size - 1:
+            recv_bottom_buf.zero_()
+
+        if p2p_ops:
+            reqs = dist.batch_isend_irecv(p2p_ops)
+            for req in reqs:
+                req.wait()
 
     return (
         torch.concat([recv_top_buf, x, recv_bottom_buf], dim=-2),

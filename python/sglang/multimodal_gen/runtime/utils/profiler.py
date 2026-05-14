@@ -146,6 +146,8 @@ class SGLDiffusionProfiler:
         if current_platform.is_npu():
             torch.npu.synchronize()
             export_trace = False  # set to false because our internal torch_npu.profiler will generate trace file
+        if hasattr(torch, "xpu") and torch.xpu.is_available():
+            torch.xpu.synchronize()
         self.profiler.stop()
 
         if export_trace:
